@@ -1,0 +1,98 @@
+name: krine
+
+x-service: &service
+  restart: unless-stopped
+  networks: [storage]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  postgres:
+    <<: *service
+    image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    entrypoint: [/bin/sh, /opt/krine/postgres-entrypoint.sh]
+    command: [postgres]
+    environment:
+      POSTGRES_DB: krine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets: [postgres_admin_password, postgres_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/entrypoint.sh:/opt/krine/postgres-entrypoint.sh:ro
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/10-krine.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'PGPASSWORD="$$(cat /run/secrets/postgres_password)" psql -U krine -d krine -h 127.0.0.1 -Atqc "SELECT 1" | grep -qx 1']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    stop_grace_period: 60s
+    mem_limit: 1g
+
+  valkey:
+    <<: *service
+    image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+    entrypoint: [/bin/sh, /opt/krine/valkey-entrypoint.sh]
+    secrets: [valkey_password]
+    volumes:
+      - valkey_data:/data
+      - ./deploy/valkey/entrypoint.sh:/opt/krine/valkey-entrypoint.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(cat /run/secrets/valkey_password)" valkey-cli --user krine --no-auth-warning ping | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 60s
+    mem_limit: 512m
+
+  clickhouse:
+    <<: *service
+    image: clickhouse/clickhouse-server:26.8.11.7@sha256:741c97b58cc8fef0f4958ba302c4a3c2d66ffa2f0bfe35b57dff31700d62cf11
+    entrypoint: [/bin/sh, /opt/krine/clickhouse-entrypoint.sh]
+    environment:
+      CLICKHOUSE_DB: krine
+      CLICKHOUSE_USER: krine
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_password
+    secrets: [clickhouse_password]
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./deploy/clickhouse/entrypoint.sh:/opt/krine/clickhouse-entrypoint.sh:ro
+      - ./deploy/clickhouse/config.xml:/etc/clickhouse-server/config.d/krine.xml:ro
+    healthcheck:
+      test: [CMD-SHELL, 'CLICKHOUSE_PASSWORD="$$(cat /run/secrets/clickhouse_password)" clickhouse-client --host "$$(hostname)" --user krine --database krine --query "SELECT 1" | grep -qx 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 60s
+    mem_limit: 2g
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+networks:
+  storage:
+    internal: true
+
+volumes:
+  postgres_data:
+  valkey_data:
+  clickhouse_data:
+
+secrets:
+  postgres_admin_password:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/postgres_admin_password
+  postgres_password:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/postgres_password
+  valkey_password:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/valkey_password
+  clickhouse_password:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/clickhouse_password

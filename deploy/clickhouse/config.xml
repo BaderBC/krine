@@ -1,0 +1,14 @@
+<clickhouse>
+    <listen_host replace="replace">0.0.0.0</listen_host>
+    <mysql_port remove="remove" />
+    <postgresql_port remove="remove" />
+    <interserver_http_port remove="remove" />
+    <logger>
+        <level>warning</level>
+        <console>true</console>
+        <log remove="remove" />
+        <errorlog remove="remove" />
+    </logger>
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+    <max_connections>256</max_connections>
+</clickhouse>

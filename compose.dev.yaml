@@ -1,0 +1,12 @@
+services:
+  postgres:
+    ports: ["127.0.0.1:${KRINE_POSTGRES_PORT:-15432}:5432"]
+  valkey:
+    ports: ["127.0.0.1:${KRINE_VALKEY_PORT:-16379}:6379"]
+  clickhouse:
+    ports: ["127.0.0.1:${KRINE_CLICKHOUSE_PORT:-18123}:8123"]
+
+# Docker does not publish ports from an internal-only bridge.
+networks:
+  storage:
+    internal: false
