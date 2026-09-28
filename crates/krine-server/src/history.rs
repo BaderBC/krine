@@ -1,0 +1,332 @@
+use crate::{
+    App,
+    admin::{self, List},
+    error::{ApiError, Result},
+    util,
+};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sqlx::Row;
+
+async fn clickhouse(
+    app: &App,
+    query: &str,
+    params: Vec<(&str, String)>,
+    body: Option<String>,
+) -> Result<String> {
+    let request = app
+        .http
+        .post(&app.config.clickhouse_url)
+        .basic_auth(
+            &app.config.clickhouse_user,
+            Some(&app.config.clickhouse_password),
+        )
+        .query(&[("database", "krine"), ("query", query)])
+        .query(&params);
+    let mut response = request
+        .header(
+            reqwest::header::CONTENT_LENGTH,
+            body.as_ref().map_or(0, String::len),
+        )
+        .body(body.unwrap_or_default())
+        .send()
+        .await
+        .map_err(|_| ApiError::unavailable())?;
+    if !response.status().is_success() {
+        tracing::warn!(status=%response.status(), code=?response.headers().get("x-clickhouse-exception-code"), "analytical request rejected");
+        return Err(ApiError::unavailable());
+    }
+    if response.content_length().is_some_and(|n| n > 8_388_608) {
+        return Err(ApiError::unavailable());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| ApiError::unavailable())?
+    {
+        if bytes.len() + chunk.len() > 8_388_608 {
+            return Err(ApiError::unavailable());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_| ApiError::unavailable())
+}
+pub async fn export(app: &App) -> Result<()> {
+    clickhouse(app,"CREATE TABLE IF NOT EXISTS history (kind LowCardinality(String), id String, at Int64, payload String) ENGINE=ReplacingMergeTree ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY",vec![],None).await?;
+    let mut tx = app.db.begin().await?;
+    let rows=sqlx::query("SELECT id,kind,at,payload FROM outbox WHERE exported_at IS NULL ORDER BY at LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
+    if rows.is_empty() {
+        tx.rollback().await?;
+        return cleanup(app).await;
+    }
+    let mut body = String::new();
+    let mut ids = Vec::new();
+    for row in rows {
+        let id: String = row.get("id");
+        body.push_str(&serde_json::to_string(&json!({"id":id,"kind":row.get::<String,_>("kind"),"at":row.get::<i64,_>("at"),"payload":row.get::<Value,_>("payload").to_string()})).map_err(|_|ApiError::unavailable())?);
+        body.push('\n');
+        ids.push(id);
+    }
+    clickhouse(
+        app,
+        "INSERT INTO history FORMAT JSONEachRow",
+        vec![],
+        Some(body),
+    )
+    .await?;
+    sqlx::query("UPDATE outbox SET exported_at=$1 WHERE id=ANY($2)")
+        .bind(util::now())
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    cleanup(app).await
+}
+async fn cleanup(app: &App) -> Result<()> {
+    let cutoff = util::now() - 172_800_000;
+    // Never remove unexported envelopes. Retry guards outlive their supported
+    // windows; analytical retention belongs to ClickHouse rather than PG.
+    let mut tx = app.db.begin().await?;
+    sqlx::query("DELETE FROM events e WHERE accepted_at<$1 AND projected AND EXISTS(SELECT 1 FROM outbox o WHERE o.id='event:'||e.id AND o.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM operations o WHERE accepted_at<$1 AND response IS NOT NULL AND EXISTS(SELECT 1 FROM outbox b WHERE b.id='decision:'||(o.response->>'decision_id') AND b.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM operations WHERE accepted_at<$1 AND response IS NULL")
+        .bind(cutoff)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM outbox WHERE at<$1 AND exported_at IS NOT NULL")
+        .bind(cutoff)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM admin_mutations WHERE created_at<$1")
+        .bind(cutoff)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM admin_sessions WHERE expires_at<$1")
+        .bind(util::now())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM observed_ips WHERE last_seen<$1")
+        .bind(util::now() - 2_592_000_000_i64)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Filters {
+    limit: Option<i64>,
+    cursor: Option<String>,
+    check: Option<String>,
+    operation_id: Option<String>,
+    outcome: Option<String>,
+    entity: Option<String>,
+    name: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+}
+const DECISION_SUMMARY_FIELDS: &[&str] = &[
+    "decision_id",
+    "operation_id",
+    "check",
+    "policy_version",
+    "outcome",
+    "reason",
+    "accepted_at",
+    "completed_at",
+    "client_id",
+    "session_id",
+    "user_id",
+    "ip",
+    "source",
+];
+
+async fn list(
+    app: &App,
+    kind: &str,
+    f: Filters,
+    entity_field: Option<&'static str>,
+) -> Result<Json<Value>> {
+    let list = List {
+        limit: f.limit,
+        cursor: f.cursor,
+        q: None,
+    };
+    let limit = list.limit()?;
+    let after = list.cursor()?;
+    for value in [&f.check, &f.operation_id, &f.outcome, &f.entity, &f.name]
+        .into_iter()
+        .flatten()
+    {
+        if value.len() > 256 {
+            return Err(ApiError::invalid("Activity filter is too long."));
+        }
+    }
+    if f.from.zip(f.to).is_some_and(|(from, to)| from > to) {
+        return Err(ApiError::invalid("Invalid time range."));
+    }
+    let mut query = "SELECT at,id".to_owned();
+    if kind == "decision" {
+        // Large policy traces belong only in the detail response. Extract raw
+        // scalar JSON so nullable IDs and numeric fields keep their wire types.
+        for field in DECISION_SUMMARY_FIELDS {
+            query.push_str(&format!(
+                ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
+            ));
+        }
+    } else {
+        query.push_str(",payload");
+    }
+    query.push_str(" FROM history FINAL WHERE kind={kind:String}");
+    let mut params = vec![
+        ("param_kind", kind.to_owned()),
+        ("param_limit", (limit + 1).to_string()),
+    ];
+    for (field, key, value) in [
+        ("check", "param_check", f.check),
+        ("operation_id", "param_operation_id", f.operation_id),
+        ("outcome", "param_outcome", f.outcome),
+        ("name", "param_name", f.name),
+    ] {
+        if let Some(value) = value {
+            query.push_str(&format!(
+                " AND JSONExtractString(payload,'{field}')={{{}:String}}",
+                key.trim_start_matches("param_")
+            ));
+            params.push((key, value));
+        }
+    }
+    if let Some(entity) = f.entity {
+        if let Some(field) = entity_field {
+            query.push_str(&format!(
+                " AND JSONExtractString(payload,'{field}')={{entity:String}}"
+            ));
+        } else {
+            query.push_str(" AND (JSONExtractString(payload,'client_id')={entity:String} OR JSONExtractString(payload,'session_id')={entity:String} OR JSONExtractString(payload,'user_id')={entity:String} OR JSONExtractString(payload,'ip')={entity:String})");
+        }
+        params.push(("param_entity", entity));
+    }
+    if let Some(from) = f.from {
+        query.push_str(" AND at>={from:Int64}");
+        params.push(("param_from", from.to_string()));
+    }
+    if let Some(to) = f.to {
+        query.push_str(" AND at<={to:Int64}");
+        params.push(("param_to", to.to_string()));
+    }
+    if let Some((at, id)) = after {
+        query.push_str(" AND (at,id)<({cursor_at:Int64},{cursor_id:String})");
+        params.push(("param_cursor_at", at.to_string()));
+        params.push(("param_cursor_id", id));
+    }
+    query.push_str(" ORDER BY at DESC,id DESC LIMIT {limit:UInt32} FORMAT JSONEachRow");
+    let response = clickhouse(app, &query, params, None).await?;
+    let mut rows = Vec::new();
+    for line in response.lines() {
+        rows.push(serde_json::from_str::<Value>(line).map_err(|_| ApiError::unavailable())?);
+    }
+    let next = if rows.len() > limit as usize {
+        let row = &rows[limit as usize - 1];
+        let at = parse_i64(&row["at"])?;
+        Some(admin::cursor(
+            at,
+            row["id"].as_str().ok_or_else(ApiError::unavailable)?,
+        ))
+    } else {
+        None
+    };
+    let items = rows
+        .into_iter()
+        .take(limit as usize)
+        .map(|row| {
+            if kind == "decision" {
+                return summary(&row);
+            }
+            let payload =
+                serde_json::from_str(row["payload"].as_str().ok_or_else(ApiError::unavailable)?)
+                    .map_err(|_| ApiError::unavailable())?;
+            Ok(payload)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Json(json!({"items":items,"next_cursor":next})))
+}
+fn parse_i64(value: &Value) -> Result<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+        .ok_or_else(ApiError::unavailable)
+}
+fn summary(row: &Value) -> Result<Value> {
+    let mut result = serde_json::Map::new();
+    for field in DECISION_SUMMARY_FIELDS {
+        let raw = row[format!("summary_{field}")]
+            .as_str()
+            .ok_or_else(ApiError::unavailable)?;
+        let value = serde_json::from_str(raw).map_err(|_| ApiError::unavailable())?;
+        result.insert((*field).into(), value);
+    }
+    Ok(Value::Object(result))
+}
+pub async fn events(
+    State(app): State<App>,
+    query: std::result::Result<Query<Filters>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    let Query(f) = query.map_err(|_| ApiError::invalid("Invalid activity query."))?;
+    list(&app, "event", f, None).await
+}
+pub async fn decisions(
+    State(app): State<App>,
+    query: std::result::Result<Query<Filters>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    let Query(f) = query.map_err(|_| ApiError::invalid("Invalid activity query."))?;
+    list(&app, "decision", f, None).await
+}
+async fn get(app: &App, kind: &str, id: &str) -> Result<Json<Value>> {
+    let pending: Option<Value> = sqlx::query_scalar("SELECT payload FROM outbox WHERE id=$1")
+        .bind(format!("{kind}:{id}"))
+        .fetch_optional(&app.db)
+        .await?;
+    if let Some(value) = pending {
+        return Ok(Json(value));
+    }
+    let response=clickhouse(app,"SELECT payload FROM history FINAL WHERE kind={kind:String} AND id={id:String} LIMIT 1 FORMAT JSONEachRow",vec![("param_kind",kind.into()),("param_id",format!("{kind}:{id}"))],None).await?;
+    let row: Value = serde_json::from_str(response.trim()).map_err(|_| ApiError::absent())?;
+    Ok(Json(
+        serde_json::from_str(row["payload"].as_str().ok_or_else(ApiError::unavailable)?)
+            .map_err(|_| ApiError::unavailable())?,
+    ))
+}
+pub async fn event(State(app): State<App>, Path(id): Path<String>) -> Result<Json<Value>> {
+    get(&app, "event", &id).await
+}
+pub async fn decision(State(app): State<App>, Path(id): Path<String>) -> Result<Json<Value>> {
+    get(&app, "decision", &id).await
+}
+
+pub async fn recent(app: &App, kind: &str, entity_kind: &str, entity: &str) -> Result<Value> {
+    let field = match entity_kind {
+        "client" => "client_id",
+        "session" => "session_id",
+        "user" => "user_id",
+        "ip" => "ip",
+        _ => return Err(ApiError::absent()),
+    };
+    Ok(list(
+        app,
+        kind,
+        Filters {
+            limit: Some(20),
+            entity: Some(entity.into()),
+            ..Default::default()
+        },
+        Some(field),
+    )
+    .await?
+    .0["items"]
+        .clone())
+}

@@ -12,7 +12,11 @@ if [ "${#password}" -ne 64 ]; then
 fi
 
 # Keep the password out of process arguments and Docker's environment metadata.
-cat > /tmp/krine-valkey.conf <<EOF
+# A root-owned, non-sticky directory supports restart after privilege dropping.
+mkdir -p /run/krine-valkey
+chown root:valkey /run/krine-valkey
+chmod 0750 /run/krine-valkey
+cat > /run/krine-valkey/valkey.conf <<EOF
 bind 0.0.0.0
 protected-mode yes
 user default off
@@ -26,5 +30,6 @@ maxmemory-policy noeviction
 tcp-keepalive 60
 EOF
 unset password
-chown valkey:valkey /tmp/krine-valkey.conf
-exec /usr/local/bin/docker-entrypoint.sh valkey-server /tmp/krine-valkey.conf
+chown root:valkey /run/krine-valkey/valkey.conf
+chmod 0640 /run/krine-valkey/valkey.conf
+exec /usr/local/bin/docker-entrypoint.sh valkey-server /run/krine-valkey/valkey.conf
