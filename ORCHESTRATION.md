@@ -4,6 +4,8 @@
 
 Build the documented, production-grade self-hosted MVP. The product vision and UX principles govern scope and taste; accepted ADRs govern architecture. New implementation notes do not override them. The lead orchestrator does not implement production code.
 
+Founder steering (2026-09-28): Castle (`castle.io`) and SEON inspired the platform. Use them as product reference points, subordinate to Krine's documented vision and self-hosting requirements. The Rust HTTP framework must be Axum, as explicitly requested. The backend implementation records that choice in its architecture decision.
+
 ## Roles and values
 
 - **Orchestrator:** understands the whole product, sets bounded tasks, resolves disagreements, inspects evidence, integrates work, and commits and pushes accepted units. Values coherence, simplicity, reliability, and finishing the actual product.
@@ -42,18 +44,32 @@ Before completion: run full relevant checks, run the actual application, exercis
 
 | Unit | Outcome and acceptance | State |
 | --- | --- | --- |
-| 0. Durable baseline | Preserve supplied documentation/skills, establish repository and orchestration record | In progress |
-| 1. Shared foundation | Concrete protocol, bounded typed policy evaluator, three-valued logic, versioned metric catalog, transaction/recovery ADR; independent QA and security review | Implementer active |
+| 0. Durable baseline | Preserve supplied documentation/skills, establish repository and orchestration record | Complete: a2d6e68 pushed |
+| 1. Shared foundation | Concrete protocol, bounded typed policy evaluator, three-valued logic, versioned metric catalog, transaction/recovery ADR; independent QA and security review | Accepted after fresh QA; committing |
 | 2. First deployed decision | Rust HTTP service using real PostgreSQL/Valkey/ClickHouse, both SDKs, evidence/event/association/metric/check flow, immutable trace; outside-in replay/concurrency/restart checks | Pending foundation |
 | 3. Authoring and investigation | Restrained React dashboard, reviewed atomic publication/restoration, historical decisions/events/entities/metrics, credentials and integration instructions | Pending stable contracts |
 | 4. Providers and verification | Real intelligence and challenge adapters, tested/masked configuration, bounded failures, same-attempt multi-step verification | Pending foundation |
 | 5. Correction and operations | Auditable reversible associations, retention, health/diagnostics, secure deployment, usable runnable integration example | Pending |
 | 6. Release gate | Full tests and running product walkthrough, security/final QA, Founder review, simplification, durable docs, clean pushed Git | Pending |
 
-Parallel ownership follows shared contracts: Rust backend, TypeScript SDKs/example, and dashboard can proceed independently once unit 1 is accepted. Deployment/tooling may proceed independently now. Unit sizes may split at coherent review boundaries; none bypass QA.
+Parallel ownership follows shared contracts. The reviewed browser/server protocol subset now permits SDK implementation while the pure evaluator and admin contracts are finalized. SDKs own root pnpm configuration and `packages/`; deployment owns compose/deploy/scripts; the foundation owns Cargo/core/protocol/ADR 0009. Dashboard and backend wait for their shared contracts. Unit sizes may split at coherent review boundaries; none bypass QA.
 
 ## Acceptance and evidence ledger
 
-Track concrete commands, runtime walkthroughs, review findings and their disposition here as units complete. The baseline contains no application, so no application test is currently claimed green. Docker daemon access is verified. GitHub authentication works with network access; `baderbc/krine` does not yet exist.
+Track concrete commands, runtime walkthroughs, review findings and their disposition here as units complete. The baseline contains no application, so no application test is currently claimed green. Docker daemon access is verified. GitHub repository [baderbc/krine](https://github.com/BaderBC/krine) was created and the starting context pushed. Direct sandbox network calls can misreport authentication; approved network access succeeds.
 
 The highest-risk foundation is the combination of event acknowledgement visibility, replay versus retry recovery, pinned challenge context, and trusted IP/proxy handling. These receive dedicated adversarial review before dependent product work is accepted.
+
+### Foundation review decisions
+
+- Security finding accepted: a known verification requirement must survive continuation transport failure. Initial unknown checks retain the documented availability default; continuation after a known challenge cannot fall back to Allow. SDK/application state must preserve that distinction across retries and processes.
+- Security finding accepted: a stale Valkey AOF/RDB can retain a readiness marker but lose acknowledged counters. Detect process incarnation/rollback against durable projection state; gate reads during reconstruction. Runtime verification must restore an older snapshot and race ingestion with reconstruction.
+- Product contract corrections required: retain minimal create/revoke credentials, candidate provider testing before activation, publication checks against both reviewed draft and active versions, explicit reviewed restoration without silent draft replacement, and event detail inspection.
+- Deployment work uses disjoint files. A local Docker DNS failure is being worked around through verified image download/load without changing shared Colima configuration.
+- Initial security contract review is complete, with the two accepted corrections above. It is not runtime approval. Later security review must cover races, crashes, proof/challenge reuse, trusted proxy handling, auth substitution, CSRF, decoder bounds and hostile provider responses.
+
+### Accepted foundation evidence
+
+Fresh QA `foundation_qa` found no material findings in Cargo/core/LICENSE/protocol/ADR 0009. It independently passed `cargo fmt --all --check`, `cargo test --workspace --all-features --locked --offline` (14 tests), and strict workspace/all-target Clippy. Root also ran the evaluator tests independently and inspected the protocol/evaluator. The two security findings are resolved in the contract; backend runtime enforcement remains required work. ISC follows the supplied package manifest's existing license declaration.
+
+Deployment foundation is under separate fresh QA (`deployment_qa`); root independently observed all three services healthy. SDK implementation remains active and unaccepted.
