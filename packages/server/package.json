@@ -1,0 +1,27 @@
+{
+  "name": "@krine/server",
+  "version": "0.1.0",
+  "description": "Authoritative backend checks, events and identity for Krine",
+  "type": "module",
+  "license": "ISC",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@krine/protocol": "workspace:^"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

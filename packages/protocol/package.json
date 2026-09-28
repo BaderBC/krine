@@ -1,0 +1,21 @@
+{
+  "name": "@krine/protocol",
+  "version": "0.1.0",
+  "description": "Krine SDK wire types and bounded transport",
+  "type": "module",
+  "license": "ISC",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  }
+}

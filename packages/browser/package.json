@@ -1,0 +1,24 @@
+{
+  "name": "@krine/browser",
+  "version": "0.1.0",
+  "description": "Browser participation and verification helpers for Krine",
+  "type": "module",
+  "license": "ISC",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@krine/protocol": "workspace:^"
+  }
+}
