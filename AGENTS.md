@@ -49,9 +49,12 @@ Prefer a modular monolith. Do not introduce microservices, brokers, ML systems o
 - Failure semantics: `docs/engineering/reliability.md`
 - Storage responsibilities: `docs/engineering/storage.md`
 - Architecture overview: `ARCHITECTURE.md`
+- Accepted MVP defaults: `docs/decisions/0007-mvp-contract-defaults.md`
 - Explicitly unresolved questions: `docs/open-questions.md`
 - Architectural rationale: `docs/decisions/`
 
 Read only the documents relevant to the task. Do not treat `docs/open-questions.md` as settled design.
+
+Use the accepted MVP defaults and resolve remaining implementation choices with sensible, changeable defaults. Routine SDK, protocol, provider, metric-catalog and retention choices do not require founder approval or block implementation. Document durable decisions as they become concrete.
 
 When a substantial architectural decision is made, add or update an ADR instead of silently changing the system's assumptions.

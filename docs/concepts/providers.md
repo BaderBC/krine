@@ -22,14 +22,16 @@ This lets a customer replace providers without rewriting their policy model.
 
 ## Expected provider categories
 
-Initial categories likely include:
+The MVP starts with:
 
 - IP intelligence;
-- challenge / CAPTCHA-like verification;
-- email/domain intelligence.
+- challenge / CAPTCHA-like verification.
+
+Engineering selects one default challenge provider and one IP intelligence provider behind generic capability contracts. Add custom HTTP-provider support only if it is inexpensive to implement; otherwise defer it. See [MVP contract defaults](../decisions/0007-mvp-contract-defaults.md).
 
 Later categories may include:
 
+- email/domain intelligence;
 - phone intelligence;
 - device intelligence;
 - custom external signals.
@@ -52,11 +54,11 @@ A challenge slot might be implemented by:
 - another provider;
 - a custom integration.
 
-No default provider choice is locked by this document.
+The vendor choices remain delegated to engineering; these examples do not commit the MVP to particular integrations.
 
 ## Provider behavior
 
-Providers should eventually make explicit:
+Shipped providers must make explicit:
 
 - timeout behavior;
 - caching;
@@ -66,6 +68,8 @@ Providers should eventually make explicit:
 - provenance.
 
 Provider failure must not silently convert into a "safe" result.
+
+Engineering chooses normalized schemas and sensible cache, freshness and timeout defaults, with configuration where useful. These choices must preserve visible missing-data and failure semantics without coupling business policies to a vendor.
 
 ## Product boundary
 

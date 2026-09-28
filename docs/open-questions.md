@@ -1,74 +1,78 @@
 # Open questions
 
-These topics are deliberately unresolved. Future work should decide them with implementation context rather than treating the current chat history as a hidden specification.
+Use the accepted defaults in [ADR 0007](decisions/0007-mvp-contract-defaults.md). Engineers should resolve the remaining details as implementation needs them, keep defaults easy to change, and document durable decisions. MVP implementation choices do not require founder approval or block implementation. Post-MVP scope remains deferred.
+
+The sections below distinguish implementation choices from deferred product scope.
 
 ## Core protocol
 
-Not yet fixed:
+Implementation choices:
 
 - exact browser SDK API;
 - exact server SDK API;
 - exact interaction-proof wire format;
-- proof lifetime;
-- how strongly IP mismatch should invalidate a proof;
-- whether limited tolerance is needed for mobile/network changes;
-- exact order of challenge vs policy evaluation;
+- bounded challenge-continuation lifetime and supported retry window;
 - exact consume/check transaction boundaries.
 
-Direction is documented in `concepts/identity.md` and `engineering/security.md`, but not the protocol.
+The default proof lasts 60 seconds for initial acceptance, is single-use for one logical action attempt, and is action/IP-bound. Reject IP mismatches initially. A backend check can return `CHALLENGE_REQUIRED`; the browser completes verification and the application retries the same protected action. See `concepts/identity.md`, `concepts/checks-and-policies.md` and `engineering/reliability.md`.
 
 ## Event model
 
-Not yet fixed:
+Defaults: arbitrary JSON customer properties, idempotent event submission, and acknowledged events visible to applicable metrics in subsequent checks. See `engineering/reliability.md`.
+
+Implementation choices:
 
 - canonical event envelope;
-- event IDs / idempotency semantics;
+- event IDs and duplicate-detection mechanisms;
 - client telemetry batching;
-- event ordering guarantees;
-- how arbitrary customer event properties are represented;
-- retention defaults.
+- per-metric treatment of timestamps and late events;
+- documented payload limits;
+- configurable retention periods and defaults.
 
 ## Identity graph
 
-Not yet fixed:
+MVP relationships cover clients, backend-known users and observed IPs, alongside Krine session context. Probabilistic client graphs are deferred.
 
-- precise confidence model;
-- whether and how probabilistic client↔client relationships are stored;
-- first set of relationship types;
-- whether email/phone/payment method become full entities in MVP.
+Engineers choose relationship representation while preserving provenance, inspection and correction. Email/phone/payment metadata can remain attached facts until a concrete need justifies another entity type.
 
 ## Metrics runtime
 
-Not yet fixed:
+Start with a small useful built-in catalog and a few derived scores. Engineers choose and refine that set during implementation.
+
+Implementation choices:
 
 - representation of metric definitions;
 - where each class of metric is computed;
 - realtime feature materialization strategy;
-- version pinning/upgrade UX;
-- exact first built-in metrics.
+- implementation of version selection and explicit upgrades within the [metric reference and policy flow](product/core-flows.md#2-create-change-and-restore-a-policy).
+
+Published policies retain their metric semantics. Substantial semantic changes require a new metric version and an explicit policy upgrade.
 
 ## Policy representation
 
-Not yet fixed:
+Policies follow draft → publish. Published versions are immutable and restorable.
+
+Implementation choices:
 
 - internal AST/graph format;
 - whether a CEL-like expression layer exists underneath;
-- editor implementation;
+- implementation of the [ordered rule editor](product/information-architecture.md#policy-editor);
 - policy execution engine details.
 
 ## Challenge provider
 
-The provider model is agreed.
+The provider model is agreed. MVP includes one default challenge provider and one IP provider.
 
-The initial default provider is not locked.
+Engineers select the initial implementations and document the choice. Provider selection does not require founder approval.
 
 ## Provider API
 
-Not yet fixed:
+Implementation choices:
 
 - normalized capability schemas;
-- custom HTTP-provider format;
-- cache and timeout configuration UX.
+- cache, freshness and timeout defaults and configuration UX.
+
+Add a custom HTTP-provider format only if it fits without substantial extra scope; otherwise defer it.
 
 ## Multi-project / multi-tenant product
 

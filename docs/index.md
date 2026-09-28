@@ -7,6 +7,8 @@ This documentation records decisions already made and leaves unresolved design e
 - `product/vision.md`
 - `product/mvp.md`
 - `product/ux.md`
+- [Information architecture](product/information-architecture.md)
+- [Core user flows](product/core-flows.md)
 
 ## Concepts
 
@@ -25,6 +27,8 @@ This documentation records decisions already made and leaves unresolved design e
 ## Decisions
 
 See `decisions/`.
+
+Start implementation with the accepted [MVP contract defaults](decisions/0007-mvp-contract-defaults.md). Resolve remaining engineering choices as needed and document durable decisions.
 
 ## Open questions
 

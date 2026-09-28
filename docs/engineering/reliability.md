@@ -4,9 +4,9 @@ Krine sits on protected application actions. Failure behavior is therefore part 
 
 ## Backend-side fallback
 
-The server SDK should support local fallback behavior when Krine itself is unavailable.
+The server SDK supports local fallback behavior when Krine itself is unavailable, including when a request times out. The default fallback is `allow`, with a configurable global default and per-check overrides.
 
-Conceptually:
+Example configuration:
 
 ```text
 default: allow
@@ -14,9 +14,27 @@ can_withdraw: deny
 can_change_email: deny
 ```
 
-A global/default policy such as "allow all unless overridden" should be possible.
+Every result identifies whether it came from a Krine evaluation or local SDK fallback. Fallback also reports why evaluation was unavailable. An explicit denial, challenge requirement, invalid proof, authentication error or invalid request must not become a fallback allow.
 
 Exact SDK syntax remains an implementation decision.
+
+## Idempotent checks and timeout recovery
+
+Use a stable operation key for one logical protected action attempt. Retries with the same key and business inputs recover that attempt and its final decision without repeating effects. Reusing a key with different business inputs is an error. Concurrent duplicates must not start independent evaluations.
+
+`CHALLENGE_REQUIRED` is an intermediate state. Verified challenge completion may advance the same attempt; an ordinary transport retry must not bypass verification. Final decisions remain stable across retries.
+
+A timeout means the result may be unknown, even if the SDK returns a configured fallback. Retry the same operation rather than starting another attempt. Keep recovery available for a documented retry window that outlives initial proof expiry. Challenge continuation also has a bounded lifetime chosen and documented during implementation.
+
+The customer's backend remains responsible for idempotent execution of its business operation, including when fallback allowed it to proceed. Replaying a Krine decision must not execute that operation twice.
+
+## Event acknowledgement
+
+Customer event properties may contain arbitrary JSON within a validated envelope and documented payload limits. Preserve the distinction between authoritative backend events and untrusted client evidence.
+
+Event submission is idempotent: retrying the same event identity and content has one effect; reusing that identity with different content is an error. A successful ingestion acknowledgement means the event's effect is visible to applicable supported metrics in checks started afterward for the affected entities. Return an error if that visibility cannot be guaranteed.
+
+Dashboard and analytical views may update later. The MVP promises no global ordering across independently submitted events; each metric documents its time basis and treatment of late events. Choose batching and storage mechanisms during implementation without weakening the acknowledgement guarantee.
 
 ## Why fallback is local
 

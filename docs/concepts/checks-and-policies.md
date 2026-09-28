@@ -23,9 +23,15 @@ A check is a first-class object with its own:
 - latency/error metrics;
 - future testing/shadow data.
 
+## Policy lifecycle
+
+Policies follow a draft → publish workflow. Editing a draft does not change the active policy. Publishing activates an immutable version, and a previous published version can be restored without changing its definition.
+
+Published policies preserve their metric semantics. A metric upgrade is explicit and becomes part of a new published policy version. See [MVP contract defaults](../decisions/0007-mvp-contract-defaults.md).
+
 ## Policy editor
 
-The primary policy interface is no-code and visual.
+The primary policy interface is no-code and visual. The [MVP editor](../product/information-architecture.md#policy-editor) uses ordered rules with disclosed boolean groups and explicit unknown-data paths. [ADR 0008](../decisions/0008-check-centered-information-architecture.md) records its publication, restoration and verification defaults; [core flows](../product/core-flows.md) describe the interactions.
 
 Conceptually:
 
@@ -62,13 +68,17 @@ Arbitrary code execution is not an MVP requirement.
 
 ## Challenge
 
-Challenge is an intermediate policy outcome.
+Challenge is an intermediate policy outcome. When verification is required, the backend check returns `CHALLENGE_REQUIRED`; the application passes that requirement to the browser, which completes the selected provider's challenge.
 
-The policy asks for a normalized verification capability.
+The browser then retries the protected request, and the backend retries the Krine check with the verification result. This continues the same logical protected action toward a final allow/deny result. Challenge completion does not itself authorize the action.
 
-The selected provider performs the concrete verification.
+The policy asks for a normalized verification capability; the selected provider performs the concrete verification.
 
-After verification, policy evaluation may continue toward a final allow/deny result.
+## Check retries
+
+Checks are idempotent for the same logical operation and safe to retry after a timeout. A transport retry recovers the same evaluation result. A challenge continuation advances that operation after verification, without granting authorization for another action.
+
+Engineering defines the wire format, continuation mechanism and storage boundaries while preserving these semantics. The application remains responsible for preventing duplicate execution of its protected action.
 
 ## Explainability
 

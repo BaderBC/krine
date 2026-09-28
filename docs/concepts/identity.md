@@ -34,7 +34,13 @@ client_x → user_123
 
 and enrich the user with backend-known metadata such as email or phone where product requirements justify it.
 
-The exact SDK/protocol shape is not fixed yet.
+The exact SDK/protocol shape is an engineering decision.
+
+## MVP relationship scope
+
+Start with clients, backend-known users and observed IPs (`client ↔ user ↔ IP`). Keep Krine session context alongside these relationships. Sharing an IP does not establish that two clients or users are the same identity.
+
+Probabilistic client-to-client graphs are deferred. Email, phone and similar backend-known facts can remain metadata until a concrete product need justifies another entity type.
 
 ## Do not destructively merge
 
@@ -50,16 +56,17 @@ Backend events are naturally keyed by application user/account identity.
 
 Krine's identity layer connects these worlds while retaining provenance.
 
-## Interaction proof direction
+## Interaction proof defaults
 
-For protected browser actions, the current direction is:
+For protected browser actions:
 
 - the browser obtains a fresh Krine interaction proof;
 - the customer's backend performs the authoritative check;
-- the proof must be short-lived and single-use;
-- the proof should be bound to the action;
-- current direction is also to bind it to the source IP observed by Krine.
+- the proof expires after 60 seconds by default for initial acceptance;
+- the proof is single-use for one logical action attempt;
+- the proof is bound to the action and source IP observed by Krine;
+- an IP mismatch is rejected in MVP.
 
-Exact expiry, IP mismatch tolerance and wire protocol remain open design questions.
+Retries may recover the same attempt, and verified challenge completion may continue it. A consumed proof cannot start another attempt. Proof expiry does not erase an already-recorded result within the supported retry window.
 
-See `../open-questions.md`.
+These are implementation defaults that can evolve explicitly. Engineers choose the wire format, bounded challenge-continuation lifetime and retry window as part of implementation. See [ADR 0007](../decisions/0007-mvp-contract-defaults.md) and [reliability](../engineering/reliability.md).

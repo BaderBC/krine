@@ -40,7 +40,7 @@ Responsibilities currently agreed:
 - optionally collect passive client telemetry;
 - participate in the interaction-proof / challenge flow before protected actions.
 
-The exact wire protocol is deliberately not fixed yet.
+The exact wire protocol is an engineering decision within the accepted [MVP contract defaults](docs/decisions/0007-mvp-contract-defaults.md).
 
 ### Server SDK
 
@@ -75,15 +75,9 @@ These are logical responsibilities, not mandatory process boundaries.
 
 React + TypeScript + Vite.
 
-The UI should revolve around a small number of first-class product concepts, especially:
+The dashboard opens on Checks and has three primary destinations: Checks, Activity and Metrics. Settings is a secondary utility destination. Policies live inside checks; Activity contains decisions and events, with links to entity detail. Providers and SDK setup live in Settings.
 
-- Checks
-- Metrics
-- Clients / users
-- Decisions
-- Providers
-
-Avoid dashboard sprawl.
+See the [information architecture](docs/product/information-architecture.md), [core user flows](docs/product/core-flows.md) and [ADR 0008](docs/decisions/0008-check-centered-information-architecture.md).
 
 ## Storage responsibilities
 

@@ -13,6 +13,8 @@ Two broad sources exist:
 
 Events describe what happened.
 
+MVP events accept arbitrary JSON customer properties within a validated envelope. Submissions are idempotent, and acknowledged events affect applicable metrics in subsequent checks. See [event acknowledgement](../engineering/reliability.md#event-acknowledgement).
+
 ## Client
 
 A Krine-managed client identifier representing a browser/client context over time.

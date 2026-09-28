@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Best Practices"
+  short_description: "Idiomatic Rust with Bon and Statum authorized by default"
+  default_prompt: "Use $rust-best-practices to write, refactor, review, optimize, or document idiomatic Rust APIs and examples on the repository baseline, with Bon and Statum authorized by default. Distinguish Rust idioms from house-style preferences, respect applicable cargo-deny bans, and keep changes task-scoped."

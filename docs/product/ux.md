@@ -6,6 +6,8 @@ Krine should feel closer to a focused Apple utility than a typical enterprise se
 
 Make complex trust infrastructure feel simple without hiding important security meaning.
 
+The [information architecture](information-architecture.md) and [core user flows](core-flows.md) apply these principles to the MVP. This document remains the higher-level product taste.
+
 ## Principles
 
 ### Minimal surfaces

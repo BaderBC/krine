@@ -53,7 +53,9 @@ Derived metric behavior may change over time.
 
 A substantial semantic change must be versioned so that policy behavior cannot silently change underneath customers.
 
-The exact version-selection UX is not decided yet, but silent semantic drift is not acceptable.
+Published policies preserve the metric versions they use. Adopting changed metric semantics requires an explicit upgrade and a new published policy version; previous policy versions remain immutable and restorable.
+
+Engineering chooses the version-selection UX and implementation within these guarantees. See [MVP contract defaults](../decisions/0007-mvp-contract-defaults.md).
 
 ## Missing data
 
@@ -74,6 +76,8 @@ Derived metrics must define how missing dependencies affect them.
 The MVP dashboard contains a read-only Metrics Catalog.
 
 Users can inspect metrics and their README-like documentation.
+
+Engineering selects a small initial set of primitive metrics and a few derived metrics, and refines the catalog during implementation. The examples above illustrate the model rather than promise a launch catalog. Each shipped metric must satisfy the metadata, missing-data and versioning requirements above.
 
 User-authored metrics are intentionally deferred.
 
