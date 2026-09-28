@@ -859,3 +859,84 @@ async fn large_decision_pages_and_typed_entity_history() {
     .await;
     assert_eq!(broad["items"].as_array().unwrap().len(), 31);
 }
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL, Valkey, ClickHouse and KRINE_* configuration"]
+async fn saved_draft_changes_follow_policy_content() {
+    let runtime = Runtime::start().await;
+    let name = unique();
+    let created = ok(runtime
+        .admin(reqwest::Method::POST, "/checks", &unique())
+        .json(&json!({"name":name})))
+    .await;
+    assert!(created["active_version"].is_null());
+    assert_eq!(created["has_draft_changes"], true);
+    let original = created["draft"].clone();
+    let path = format!("/checks/{name}");
+    let mut revision = 1;
+    let mut active = None::<i64>;
+    let mut changed = original.clone();
+    changed["otherwise"] = json!("ALLOW");
+
+    for (policy, expected, publish) in [
+        (original.clone(), true, true),
+        (original.clone(), false, false),
+        (changed.clone(), true, false),
+        (original.clone(), false, false),
+        (changed, true, true),
+    ] {
+        let saved = ok(runtime
+            .admin(reqwest::Method::PUT, &format!("{path}/draft"), &unique())
+            .json(&json!({"revision":revision,"description":"Description changes are independent","policy":policy})))
+        .await;
+        revision += 1;
+        assert_eq!(saved["draft_revision"], revision);
+        assert_eq!(saved["has_draft_changes"], expected);
+        for document in [
+            ok(runtime.admin(reqwest::Method::GET, &path, &unique())).await,
+            ok(runtime.admin(
+                reqwest::Method::GET,
+                &format!("/checks?q={name}"),
+                &unique(),
+            ))
+            .await["items"][0]
+                .clone(),
+        ] {
+            assert_eq!(document["has_draft_changes"], expected);
+            assert_eq!(document["active_version"], json!(active));
+        }
+        if publish {
+            let result = ok(runtime
+                .admin(
+                    reqwest::Method::POST,
+                    &format!("{path}/publications"),
+                    &unique(),
+                )
+                .json(&json!({"revision":revision,"expected_active_version":active})))
+            .await;
+            active = result["version"].as_i64();
+            let detail = ok(runtime.admin(reqwest::Method::GET, &path, &unique())).await;
+            let list = ok(runtime.admin(
+                reqwest::Method::GET,
+                &format!("/checks?q={name}"),
+                &unique(),
+            ))
+            .await;
+            assert_eq!(detail["has_draft_changes"], false);
+            assert_eq!(list["items"][0]["has_draft_changes"], false);
+        }
+    }
+    // Restoring the active version is unchanged; an older version is a draft edit.
+    for (version, expected) in [(2, false), (1, true)] {
+        let restored = ok(runtime
+            .admin(
+                reqwest::Method::POST,
+                &format!("{path}/restorations"),
+                &unique(),
+            )
+            .json(&json!({"version":version,"revision":revision,"replace_draft":true})))
+        .await;
+        revision += 1;
+        assert_eq!(restored["has_draft_changes"], expected);
+    }
+}

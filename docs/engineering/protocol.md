@@ -99,9 +99,9 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 
 | Method and path | Input / response |
 | --- | --- |
-| `GET /checks` | Optional `q`; items `{ name, description, active_version: number|null, draft_revision, updated_at, recent: { allow, deny, challenge, errors, p95_ms: number|null } }`; recent is last 24h and may be unavailable as `null` |
+| `GET /checks` | Optional `q`; items `{ name, description, active_version: number|null, draft_revision, has_draft_changes: boolean, updated_at, recent: { allow, deny, challenge, errors, p95_ms: number|null } }`; recent is last 24h and may be unavailable as `null` |
 | `POST /checks` | `{ name, description? }` → check detail; empty deny draft |
-| `GET /checks/{name}` | `{ name, description, active_version, draft_revision, draft: Policy, updated_at }` |
+| `GET /checks/{name}` | `{ name, description, active_version, draft_revision, has_draft_changes: boolean, draft: Policy, updated_at }` |
 | `PUT /checks/{name}/draft` | `{ revision, description, policy: Policy }` → check detail; accepts valid draft only |
 | `POST /checks/{name}/publications` | `{ revision, expected_active_version: number|null }` → `{ version, published_at, policy: Policy, restored_from_version: number|null }`; compare both reviewed draft revision and active version atomically; validate required capability configuration and metric versions; current provider outage does not block publication when explicit unknown/failure routes exist |
 | `GET /checks/{name}/versions` | Items `{ version, published_at, policy: Policy }` |
@@ -123,6 +123,8 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 | `GET /credentials` | `{ items: CredentialSummary[] }` |
 | `POST /credentials` | `{ kind: "browser"|"server", name, allowed_origins?: string[] }` → `{ credential: CredentialSummary, secret }`; reveal secret once; subsequent retries return metadata with `secret: null` and `secret_unavailable: true` |
 | `POST /credentials/{id}/revocations` | `{}` → revoked `CredentialSummary`; stop accepting revoked credential immediately |
+
+`has_draft_changes` compares the saved draft policy with the active immutable policy by JSON value, independently of draft revision numbers or description edits. It is `true` while unpublished; `active_version: null` identifies that state. Saving the active policy again or undoing an edit returns it to `false`; publication also makes it `false`.
 
 `ProviderSummary` is `{ capability, provider, enabled, revision, config, has_secret, status, checked_at, dependent_checks: string[] }`; capabilities are `ip_intelligence` and `verification`. `config` contains public configuration only; secret writes use explicit `secret` within write config, omission retains the previous secret and `null` clears it. Old revisions needed by pending attempts are retained. Candidate tests never change active configuration, and failed tests cannot be saved as enabled. Initial providers: `proxycheck` for IP intelligence and `turnstile` for verification; their adapters normalize evidence. Policies never mention either name. `CredentialSummary` is `{ id, kind, name, prefix, allowed_origins, created_at, revoked_at: number|null }`. Secret-once creation is an intentional exception to response replay; on a lost first response create a replacement and revoke the inaccessible credential.
 
