@@ -8,7 +8,7 @@ secrets_dir=${KRINE_SECRETS_DIR:-./deploy/secrets}
 mkdir -p "$secrets_dir"
 chmod 700 "$secrets_dir"
 
-for name in postgres_admin_password postgres_password valkey_password clickhouse_password; do
+for name in postgres_admin_password postgres_password valkey_password clickhouse_password browser_public_key server_secret admin_password; do
     path=$secrets_dir/$name
     if [ -L "$path" ]; then
         echo "Refusing symlink: $path" >&2

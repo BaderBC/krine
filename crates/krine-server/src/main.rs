@@ -1,4 +1,5 @@
 use krine_server::{App, config::Config};
+mod dashboard;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -19,6 +20,10 @@ async fn run() -> Result<(), String> {
         "Required database initialization failed; check configuration and dependency health."
             .to_owned()
     })?;
+    let mut router = krine_server::router(app.clone());
+    if let Some(directory) = std::env::var_os("KRINE_DASHBOARD_DIR") {
+        router = dashboard::attach(router, std::path::Path::new(&directory))?;
+    }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|_| "Cannot bind HTTP listener".to_owned())?;
@@ -27,7 +32,7 @@ async fn run() -> Result<(), String> {
     tracing::info!(%bind,"Krine listening");
     axum::serve(
         listener,
-        krine_server::router(app).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;

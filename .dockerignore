@@ -3,6 +3,8 @@
 .codex
 .env
 .env.*
+**/.env
+**/.env.*
 **/node_modules
 .pnpm-store
 **/dist
@@ -11,4 +13,5 @@ coverage
 playwright-report
 test-results
 deploy/secrets
+**/secrets
 *.log

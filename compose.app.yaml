@@ -1,0 +1,41 @@
+services:
+  app:
+    image: ${KRINE_IMAGE:-krine:local}
+    build: .
+    restart: unless-stopped
+    networks: [storage, application]
+    ports: ["127.0.0.1:${KRINE_HTTP_PORT:-8080}:8080"]
+    environment:
+      KRINE_PUBLIC_URL: ${KRINE_PUBLIC_URL:?Set KRINE_PUBLIC_URL to the external HTTPS origin}
+      KRINE_ALLOWED_ORIGINS: ${KRINE_ALLOWED_ORIGINS:?Set KRINE_ALLOWED_ORIGINS to exact browser application origins}
+      KRINE_DEVELOPMENT: ${KRINE_DEVELOPMENT:-false}
+      KRINE_TRUSTED_PROXIES: ${KRINE_TRUSTED_PROXIES:-}
+      KRINE_BROWSER_RATE_PER_MINUTE: ${KRINE_BROWSER_RATE_PER_MINUTE:-300}
+      KRINE_SERVER_RATE_PER_MINUTE: ${KRINE_SERVER_RATE_PER_MINUTE:-3000}
+      KRINE_LOGIN_RATE_PER_MINUTE: ${KRINE_LOGIN_RATE_PER_MINUTE:-10}
+      KRINE_MAX_PENDING_OUTBOX: ${KRINE_MAX_PENDING_OUTBOX:-1000000}
+    secrets: [postgres_password, valkey_password, clickhouse_password, browser_public_key, server_secret, admin_password]
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_healthy}
+      clickhouse: {condition: service_started}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+networks:
+  application: {}
+
+secrets:
+  browser_public_key:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/browser_public_key
+  server_secret:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/server_secret
+  admin_password:
+    file: ${KRINE_SECRETS_DIR:-./deploy/secrets}/admin_password
