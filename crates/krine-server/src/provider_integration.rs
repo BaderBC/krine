@@ -617,7 +617,7 @@ async fn provider_races_crash_recovery_fencing_and_expiry() {
             .await
             .unwrap_err();
     assert!(error.to_string().contains("stop the old server"));
-    sqlx::query("SET krine.writer_generation='3'")
+    sqlx::query("SET krine.writer_generation='4'")
         .execute(&mut *legacy)
         .await
         .unwrap();
@@ -1381,7 +1381,7 @@ async fn provider_coalescing_migration_preserves_latest_revision_and_restarts() 
     assert!(
         incompatible
             .to_string()
-            .contains("generation 3; stop the old server")
+            .contains("generation 4; stop the old server")
     );
     old.close().await;
     app.db.close().await;

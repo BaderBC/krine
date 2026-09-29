@@ -96,6 +96,7 @@ export interface AssociationRequest {
   association_id: string;
   client_id: string;
   user_id: string;
+  session_id?: string | null;
   metadata?: Record<string, Json>;
 }
 
@@ -104,7 +105,12 @@ export interface Association {
   client_id: string;
   user_id: string;
   created_at: number;
-  revoked_at: null;
+  revoked_at: number | null;
+  session_id?: string | null;
+  credential_id?: string | null;
+  revision?: number;
+  revocation_reason?: string | null;
+  revoked_by?: string | null;
   provenance: 'backend';
   metadata: Record<string, Json>;
 }

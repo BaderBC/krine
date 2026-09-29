@@ -4,7 +4,7 @@ use crate::{
     error::{ApiError, Result},
     events,
     json::StrictJson,
-    projection, provider_http, providers, util,
+    projection, provider_http, providers, relationships, util,
 };
 use axum::{Json, extract::State};
 use krine_core::{
@@ -127,7 +127,7 @@ pub async fn evaluate(
         }
         events::capacity(&app, &mut tx).await?;
         let provider_revisions = providers::pin(&mut tx, &policy).await?;
-        let envelope = json!({"hostname":proof.hostname,"decision_id":util::token("dec_"),"operation_id":input.operation_id,"check":input.check,"policy_version":published.get::<i64,_>("version"),"accepted_at":now,"retry_until":now+86_400_000,"client_id":proof.client_id,"session_id":proof.session_id,"user_id":input.user_id,"ip":input.ip,"policy":policy,"snapshot":snapshot,"relationship_ids":relationships,"provider_revisions":provider_revisions});
+        let envelope = json!({"hostname":proof.hostname,"decision_id":util::token("dec_"),"operation_id":input.operation_id,"check":input.check,"policy_version":published.get::<i64,_>("version"),"accepted_at":now,"retry_until":now+86_400_000,"client_id":proof.client_id,"session_id":proof.session_id,"user_id":input.user_id,"ip":input.ip,"policy":policy,"snapshot":snapshot,"relationship_ids":relationships["items"].as_array().map(|items| items.iter().map(|item|item["id"].clone()).collect::<Vec<_>>()).unwrap_or_default(),"relationship_context":relationships,"provider_revisions":provider_revisions});
         sqlx::query("INSERT INTO operations(id,digest,proof_digest,accepted_at,retry_until,envelope) VALUES($1,$2,$3,$4,$5,$6)").bind(&input.operation_id).bind(digest).bind(proof_digest).bind(now).bind(now+86_400_000).bind(&envelope).execute(&mut *tx).await?;
     }
     // Commit ownership and all evidence before evaluation. If cancellation or a
@@ -160,7 +160,7 @@ async fn snapshot(
     tx: &mut Transaction<'_, Postgres>,
     proof: &Proof,
     input: &CheckRequest,
-) -> Result<(Snapshot, Vec<String>, i64)> {
+) -> Result<(Snapshot, Value, i64)> {
     // Capture the evaluation time only after coordinated projection recovery.
     // Earlier request timestamps can refer to an event window already pruned.
     let ready = match projection::locked_ready(app, tx).await {
@@ -168,6 +168,7 @@ async fn snapshot(
         Err(error) if error.dependency == Some("valkey") => None,
         Err(error) => return Err(error),
     };
+    relationships::lock(tx, &proof.client_id).await?;
     let snapshot_started = std::time::Instant::now();
     let at = util::now();
     let mut snapshot = Snapshot {
@@ -209,15 +210,12 @@ async fn snapshot(
             Scalar::Boolean(automation),
         );
     }
-    let relationships=sqlx::query("SELECT id,user_id FROM associations WHERE client_id=$1 AND revoked_at IS NULL AND created_at>=$2 ORDER BY id").bind(&proof.client_id).bind(at-2_592_000_000).fetch_all(&mut **tx).await?;
-    let users = relationships
-        .iter()
-        .map(|r| r.get::<String, _>("user_id"))
-        .collect::<std::collections::BTreeSet<_>>();
+    let (users, relationships) =
+        relationships::snapshot(tx, &proof.client_id, &proof.session_id, &input.ip, at).await?;
     known(
         &mut snapshot,
         "client.user_count_30d",
-        Scalar::Number(users.len() as f64),
+        Scalar::Number(users as f64),
     );
     for (metric, kind, id) in [
         (
@@ -254,11 +252,7 @@ async fn snapshot(
         }
     }
     derive_metrics(&mut snapshot, at as u64);
-    Ok((
-        snapshot,
-        relationships.into_iter().map(|r| r.get("id")).collect(),
-        at,
-    ))
+    Ok((snapshot, relationships, at))
 }
 fn known(snapshot: &mut Snapshot, name: &str, value: Scalar) {
     if let Some(metric) = snapshot.metrics.get_mut(name) {

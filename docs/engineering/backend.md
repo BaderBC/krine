@@ -146,3 +146,14 @@ when its latest snapshot has exported, so a full queue does not grow with each
 challenge step. Pending attempts survive cleanup until their durable expired final
 exports; cleanup never discards unexported finals. Historical provider revisions expire after 30 days unless current
 or referenced by an unfinished attempt; expired activation tests are removed.
+
+Relationship correction uses migration 0006 and writer generation 4. Stop all
+older processes before upgrading. Assertions retain server credential and optional
+session provenance; observed IPs retain browser credential/source provenance.
+Admin correction/restoration and check snapshots coordinate per client, keeping
+current counts and captured context coherent. Captured relationship samples are
+bounded independently of the exact metric aggregation. Corrected IP segments
+retain their audit beyond ordinary 30-day observation cleanup. See
+[ADR 0013](../decisions/0013-reversible-relationship-evidence.md) for the durable
+contract and [protocol](protocol.md#relationship-provenance-and-correction) for
+routes and conflict behavior.

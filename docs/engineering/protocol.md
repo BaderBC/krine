@@ -29,7 +29,7 @@ Both return `{ client_id, session_id, expires_at }`. Credential mode returns ses
 
 `POST /v1/events` accepts `{ event_id, name, occurred_at?, user_id?, client_id?, session_id?, ip?, properties?: object }`. At least one entity identifier is required. Session requires its matching client; supplied Krine IDs must exist. `occurred_at` is descriptive; windowed MVP metrics use first server acceptance time, so late submissions do not rewrite prior decisions. Future occurrence timestamps more than five minutes ahead are rejected. Response: `{ event_id, accepted_at, duplicate: boolean }`. The event ID uniquely identifies immutable content for 24 hours; exact retries have one effect, changed content returns 409. Retry after 24 hours is unsupported; integrations must not redeliver older operations. A success means supported metrics for checks started afterward include the event. Failure can have an unknown outcome: retry the same ID and body.
 
-`POST /v1/associations` accepts `{ association_id, client_id, user_id, metadata?: object }`; returns `{ association_id, client_id, user_id, created_at, revoked_at: null, provenance: "backend", metadata }`. Its key/content and retry semantics match events. This records a reversible edge and never merges entities. Association timestamps and provenance are durable. Server IDs and metadata are authoritative customer facts; browser fingerprints are not. A check's optional `user_id` asserts its current subject but does not silently create a persistent relationship.
+`POST /v1/associations` accepts `{ association_id, client_id, user_id, session_id?: string|null, metadata?: object }`; returns `{ association_id, client_id, user_id, session_id, credential_id, created_at, revoked_at: number|null, revision, revocation_reason, revoked_by, provenance: "backend", metadata }`. Its key/content and retry semantics match events. This records a reversible edge and never merges entities. Association timestamps and provenance are durable. Server IDs and metadata are authoritative customer facts; browser fingerprints are not. A check's optional `user_id` asserts its current subject but does not silently create a persistent relationship.
 
 ## Authoritative checks
 
@@ -122,8 +122,7 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 | `GET /activity/events` | Filters `name`, `entity`, `from`, `to`; items accepted event envelope + `accepted_at`, `provenance: "backend"|"browser"` |
 | `GET /activity/events/{id}` | Accepted event envelope + `accepted_at`, `provenance`, linked entity identifiers and available metric effects |
 | `GET /entities/{kind}/{id}` | `{ kind, id, first_seen, metadata, metrics: Snapshot.metrics, associations: Association[], recent_decisions: DecisionSummary[], recent_events: Event[] }`; kinds client/session/user/ip; recent lists capped at 20; associations capped at 100 with `associations_next_cursor`, accepted as `associations_cursor` on this endpoint |
-| `POST /associations/{id}/revocations` | `{ reason }` → association with `revoked_at`, `revocation_reason`, `revoked_by`; repeat safe |
-| `POST /associations/{id}/restorations` | `{ reason }` → association with restored active state and audit entry; never erases revocation history |
+| Relationship inspection and correction | See [relationship routes](#relationship-provenance-and-correction) below; revisions, reason and mutation identity are required for changes. |
 | `GET /setup` | `{ public_key: string|null, browser_credential_id: string|null, active_credentials: { browser: number, server: number }, browser_url, server_url, allowed_origins, sdk: { browser_package, server_package } }`; selects oldest active browser key; secrets omitted |
 | `GET /credentials` | Bounded cursor pagination and optional `q` label search; `{ items: CredentialSummary[], next_cursor: string|null }`; includes revoked credentials |
 | `POST /credentials` | `{ kind: "browser"|"server", label }` → `{ credential: CredentialSummary, secret: string|null, secret_status: "revealed"|"unrecoverable"|"not_applicable" }`; server secret appears only in original committed response; retries return current metadata and `unrecoverable` |
@@ -135,8 +134,53 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 
 Activity `entity` search matches the identifier across client, session, user and IP fields. Entity-detail recent history matches only the requested entity kind; equal identifier strings never merge those histories. Decision lists select summary fields from analytical storage; policy definitions, metric snapshots and evaluation traces are retrieved only for an individual decision.
 
-`DecisionSummary` is `{ decision_id, operation_id, check, policy_version, outcome, reason, accepted_at, completed_at: number|null, client_id, session_id, user_id: string|null, ip, source: "evaluation" }`. Request errors and optional reported SDK fallback use separate `source: "request_error"|"fallback"` activity entries with a reason and no fabricated policy result. `DecisionDetail` adds `{ policy, snapshot, evaluation, relationship_ids, provider_revisions, provider_observations?, verification_transitions, requests }`. `provider_revisions` maps used capabilities to `{ revision, enabled }`; `provider_observations` records the actual normalized lookup status, safe cause and observation time. `verification_transitions` is an immutable chronological sequence `{ sequence, at, challenge_id: string|null, state, detail }`; states include `pending`, `verifying`, `passed`, `failed`, `expired` and `unavailable`. The latest Activity row represents one logical attempt throughout all steps; earlier analytical deliveries cannot overwrite newer state. `evaluation` is the core trace including every evaluated condition, explicit unknown cause and verification result. `requests` is bounded attempt metadata `{ at, kind: "initial"|"retry"|"verification", result }`, never proof/challenge bearer tokens. Browser credentials, proof tokens, provider secrets and verification tokens never appear in dashboard history.
+`DecisionSummary` is `{ decision_id, operation_id, check, policy_version, outcome, reason, accepted_at, completed_at: number|null, client_id, session_id, user_id: string|null, ip, source: "evaluation" }`. Request errors and optional reported SDK fallback use separate `source: "request_error"|"fallback"` activity entries with a reason and no fabricated policy result. `DecisionDetail` adds `{ policy, snapshot, evaluation, relationship_ids, relationship_context, provider_revisions, provider_observations?, verification_transitions, requests }`. `provider_revisions` maps used capabilities to `{ revision, enabled }`; `provider_observations` records the actual normalized lookup status, safe cause and observation time. `verification_transitions` is an immutable chronological sequence `{ sequence, at, challenge_id: string|null, state, detail }`; states include `pending`, `verifying`, `passed`, `failed`, `expired` and `unavailable`. The latest Activity row represents one logical attempt throughout all steps; earlier analytical deliveries cannot overwrite newer state. `evaluation` is the core trace including every evaluated condition, explicit unknown cause and verification result. `requests` is bounded attempt metadata `{ at, kind: "initial"|"retry"|"verification", result }`, never proof/challenge bearer tokens. Browser credentials, proof tokens, provider secrets and verification tokens never appear in dashboard history.
 
 ## Retention and recovery
 
-Defaults: 30 days analytical events/decisions; 30 days observed IP edges; active backend user relationships persist until corrected. Reliability envelopes and final responses survive at least the 24-hour supported retry window. Proof/challenge tombstones last at least 24 hours beyond last valid use. Unexported delivery records are never age-deleted. Each unfinished attempt reserves one delivery slot, including while its current snapshot is already exported; subsequent states coalesce into the same slot with their complete immutable transition history. Capacity exhaustion rejects new events, browser observations and attempts before acknowledging them; already accepted attempts can finish within their reserved slots. Export acknowledgements apply only to the exact revision sent. Operator retention changes cannot erase active retry or challenge state. See ADR 0009 for event projection and restart behavior.
+Defaults: 30 days analytical events/decisions; 30 days since last observation for uncorrected IP segments; backend assertions and corrected/restored IP segments with their audit remain durable. Reliability envelopes and final responses survive at least the 24-hour supported retry window. Proof/challenge tombstones last at least 24 hours beyond last valid use. Unexported delivery records are never age-deleted. Each unfinished attempt reserves one delivery slot, including while its current snapshot is already exported; subsequent states coalesce into the same slot with their complete immutable transition history. Capacity exhaustion rejects new events, browser observations and attempts before acknowledging them; already accepted attempts can finish within their reserved slots. Export acknowledgements apply only to the exact revision sent. Operator retention changes cannot erase active retry or challenge state. See ADR 0009 for event projection and restart behavior.
+
+### Relationship provenance and correction
+
+`POST /v1/associations` accepts optional `session_id` (omitted or null means no
+session). A supplied session must belong to the supplied Krine client. Responses
+retain the existing association fields and add nullable `session_id` and
+`credential_id`, `revision`, nullable `revocation_reason` and `revoked_by`.
+`revoked_at` is a timestamp or null: an exact retry reads current correction state
+and never restores an assertion. The accepted assertion's original timestamp,
+credential and metadata remain unchanged. Omitting session preserves legacy
+request digests, including explicit-null retries.
+
+Admin routes use the existing cookie, CSRF and mutation identity contract:
+
+| Route | Contract |
+| --- | --- |
+| `GET /v1/admin/entities/{kind}/{id}/relationships` | Direct relationships; entity kind client, session, user or ip; `limit` 1–100 (default 50), opaque `cursor`; `{items,next_cursor}`. |
+| `GET /v1/admin/relationships/{kind}/{id}` | Kind `backend` or `observed_ip`; `{relationship,audit:{items,next_cursor},recalculation:"complete"}`; the same pagination parameters apply to audit. |
+| `POST /v1/admin/relationships/{kind}/{id}/corrections` | `{revision,reason}`; invalidate reviewed evidence. |
+| `POST /v1/admin/relationships/{kind}/{id}/restorations` | `{revision,reason}`; restore original evidence. |
+
+Mutation success is `{relationship,audit_id,recalculation:"complete"}`. Reasons
+contain 1–512 bytes, no control characters or surrounding whitespace. A stale
+revision returns 409 `revision_conflict`; correcting an already corrected row or
+restoring an active row returns `relationship_state_conflict`. Restoring an IP
+segment when a newer active segment exists returns `relationship_active`. The
+same idempotency key recovers its original mutation receipt even after later
+changes. Reusing the key for another request returns `input_conflict`.
+
+Relationship records have `id`, `kind`, `client_id`, nullable `session_id`,
+`user_id` and `ip`, `first_seen`, `last_seen`, `source`, nullable `credential_id`
+and `last_credential_id`, `first_source`, `last_source`, nullable `first_event_id`
+and `last_event_id`, `revision`, nullable `revoked_at`, `revocation_reason` and
+`revoked_by`, and `metadata`. Backend `source` is `backend`; observed source is
+`browser_observation` with `browser.context`, `browser.proof` or `legacy` detail.
+Audit records have `id`, `at`, `action` (`correct`/`restore` for new records),
+`reason`, `actor`, `revision` and the resulting immutable `relationship` snapshot.
+Migrated audit fields that were not recorded remain null.
+
+Decision `relationship_context` contains the sampled active backend `items`,
+exact `total`, `truncated`, `observed_at` and the current matching `observed_ip`
+summary or null. Samples contain no customer metadata. The legacy
+`relationship_ids` mirrors those sampled IDs and is not a complete relationship
+inventory when `truncated` is true. See [ADR 0013](../decisions/0013-reversible-relationship-evidence.md)
+for correction cutoff, retention and current-metric semantics.

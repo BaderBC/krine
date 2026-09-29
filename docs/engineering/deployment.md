@@ -102,7 +102,7 @@ The administrator password remains operator-provisioned environment/file input.
 
 Back up before an upgrade. Review new migrations and dependency notes, fetch the reviewed release, then run `./scripts/up.sh` with the same configuration and secret directory. The helper builds first, stops the old application, and only then starts the new image; stores remain running. Do not run old and new application writers together during a schema change. PostgreSQL migrations run before the new listener opens. Restarting a container uses the same image and does not rebuild it.
 
-History migration from the initial runtime to provider-capable history adds monotonically revisioned records and backfills legacy history once. Old application writes are rejected by the PostgreSQL generation guard after that migration. Reverting only the image is not a supported database downgrade; restore a tested compatible backup if a migration must be rolled back.
+History migration from the initial runtime to provider-capable history adds monotonically revisioned records and backfills legacy history once. Old application writes are rejected by the PostgreSQL generation guard after that migration. Migration 0006 advances the writer guard to generation 4 so older processes cannot bypass relationship snapshot locking or delete corrected observation evidence. Reverting only the image is not a supported database downgrade; restore a tested compatible backup if a migration must be rolled back.
 
 ## Durability and capacity
 

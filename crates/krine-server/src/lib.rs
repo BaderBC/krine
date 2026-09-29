@@ -12,6 +12,7 @@ mod json;
 mod projection;
 mod provider_http;
 mod providers;
+mod relationships;
 mod util;
 
 use axum::{
@@ -49,7 +50,7 @@ impl App {
             .acquire_timeout(Duration::from_secs(2))
             .after_connect(|connection, _| {
                 Box::pin(async move {
-                    sqlx::query("SET krine.writer_generation='3'")
+                    sqlx::query("SET krine.writer_generation='4'")
                         .execute(&mut *connection)
                         .await?;
                     sqlx::query("SET statement_timeout='3s'")
@@ -63,7 +64,20 @@ impl App {
             })
             .connect(&config.database_url)
             .await?;
-        sqlx::migrate!("../../migrations").run(&db).await?;
+        {
+            let mut connection = db.acquire().await?;
+            // Migration 0004 updates generation-3 rows before 0006 installs
+            // generation 4. Preserve that upgrade path without admitting old writers.
+            sqlx::query("SET krine.writer_generation='3'")
+                .execute(&mut *connection)
+                .await?;
+            sqlx::migrate!("../../migrations")
+                .run_direct(&mut *connection)
+                .await?;
+            sqlx::query("SET krine.writer_generation='4'")
+                .execute(&mut *connection)
+                .await?;
+        }
         credentials::bootstrap(&db, &config)
             .await
             .map_err(|_| "Could not initialize application credentials")?;
@@ -124,6 +138,22 @@ pub fn router(app: App) -> Router {
             get(admin::metric),
         )
         .route("/v1/admin/entities/{kind}/{id}", get(entities::detail))
+        .route(
+            "/v1/admin/entities/{kind}/{id}/relationships",
+            get(relationships::list),
+        )
+        .route(
+            "/v1/admin/relationships/{kind}/{id}",
+            get(relationships::detail),
+        )
+        .route(
+            "/v1/admin/relationships/{kind}/{id}/corrections",
+            post(relationships::correct),
+        )
+        .route(
+            "/v1/admin/relationships/{kind}/{id}/restorations",
+            post(relationships::restore),
+        )
         .route("/v1/admin/setup", get(admin::setup))
         .route(
             "/v1/admin/credentials",

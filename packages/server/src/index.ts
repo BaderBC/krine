@@ -124,8 +124,9 @@ export class KrineServer {
   }
 
   async associate(request: AssociationRequest): Promise<Association> {
-    if (!record(request) || !exactKeys(request, ['association_id', 'client_id', 'user_id', 'metadata'])
-      || !identifier(request.association_id) || !identifier(request.client_id) || !string(request.user_id, 256)) invalidInput();
+    if (!record(request) || !exactKeys(request, ['association_id', 'client_id', 'user_id', 'metadata', 'session_id'])
+      || !identifier(request.association_id) || !identifier(request.client_id) || !string(request.user_id, 256)
+      || (request.session_id != null && !identifier(request.session_id))) invalidInput();
     if (request.metadata !== undefined) {
       if (!record(request.metadata)) invalidInput();
       jsonBody(request.metadata, 16_384, 1024);
@@ -134,7 +135,15 @@ export class KrineServer {
     const snapshot = JSON.parse(body) as AssociationRequest;
     const result = await this.transport.post('/v1/associations', body);
     if (!record(result) || result.association_id !== snapshot.association_id || result.client_id !== snapshot.client_id
-      || result.user_id !== snapshot.user_id || !timestamp(result.created_at) || result.revoked_at !== null
+      || result.user_id !== snapshot.user_id || !timestamp(result.created_at)
+      || (result.revoked_at !== null && (!timestamp(result.revoked_at) || result.revoked_at < result.created_at))
+      || (result.session_id != null && !identifier(result.session_id))
+      || (snapshot.session_id != null && result.session_id !== snapshot.session_id)
+      || (snapshot.session_id == null && result.session_id != null)
+      || (result.credential_id != null && !identifier(result.credential_id))
+      || (result.revision !== undefined && (!Number.isSafeInteger(result.revision) || (result.revision as number) < 1))
+      || (result.revocation_reason != null && !string(result.revocation_reason, 512))
+      || (result.revoked_by != null && !string(result.revoked_by, 128))
       || result.provenance !== 'backend' || !record(result.metadata)) invalidResponse();
     try { jsonBody(result.metadata, 16_384, 1024); } catch { invalidResponse(); }
     return result as unknown as Association;

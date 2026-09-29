@@ -179,3 +179,11 @@ Events and associations require stable IDs and immutable bodies just like checks
 Only transport failure, timeout, 429 and generic 5xx availability errors qualify for initial check fallback. Explicit proof, authentication, validation, configuration, conflict and provider errors do not, even if mislabeled with a 5xx status. Malformed or mismatched successful responses raise `KrineError` with `code: 'invalid_response'`. Fallback settings cannot weaken continuation behavior.
 
 `HttpError` carries status and a bounded machine-readable code. `AvailabilityError` carries `reason: 'timeout' | 'unavailable' | 'rate_limited'`. Errors omit upstream bodies, request content, credentials and raw network errors. Application logs must also avoid proof tokens, browser credentials, pending contexts and provider tokens.
+
+Associations can include `session_id` from `resolveContext` when the backend
+knows the session that supplied the assertion. It must belong to `client_id`.
+Keep `association_id` stable across delivery retries. A later retry can return a
+non-null `revoked_at` after administrative correction; this is a successful
+receipt of the original assertion, not a request to reinstate it. A new genuine
+backend assertion uses a new association ID. Omitted or null session preserves
+legacy association request identity.

@@ -1,9 +1,9 @@
 use crate::{
-    App,
+    App, ApplicationCredential,
     auth::Peer,
     error::{ApiError, Result},
     json::StrictJson,
-    util,
+    relationships, util,
 };
 use axum::{Extension, Json, extract::State, http::HeaderMap};
 use redis::AsyncCommands;
@@ -88,6 +88,7 @@ async fn save(app: &App, kind: &str, token: &str, context: &Context) -> Result<(
 }
 pub async fn context(
     State(app): State<App>,
+    Extension(credential): Extension<ApplicationCredential>,
     Extension(peer): Extension<Peer>,
     StrictJson(input): StrictJson<ContextRequest>,
 ) -> Result<Json<serde_json::Value>> {
@@ -152,6 +153,7 @@ pub async fn context(
         .bind(&session.session_id)
         .execute(&mut *tx)
         .await?;
+    let observation_id = util::token("obs_");
     observe_ip(
         &mut tx,
         &client.client_id,
@@ -160,10 +162,11 @@ pub async fn context(
             .as_deref()
             .ok_or_else(ApiError::unavailable)?,
         &peer.0.to_string(),
-        now,
+        &credential.id,
+        "browser.context",
+        Some(&observation_id),
     )
     .await?;
-    let observation_id = util::token("obs_");
     crate::events::outbox(&mut tx,&observation_id,"event",now,&json!({"event_id":observation_id,"name":"browser.context","client_id":client.client_id,"session_id":session.session_id,"ip":peer.0.to_string(),"properties":session.signals,"accepted_at":now,"provenance":"browser"})).await?;
     tx.commit().await?;
     save(&app, "client", &client_token, &client).await?;
@@ -194,6 +197,7 @@ pub struct Proof {
 }
 pub async fn proof(
     State(app): State<App>,
+    Extension(credential): Extension<ApplicationCredential>,
     Extension(peer): Extension<Peer>,
     headers: HeaderMap,
     StrictJson(input): StrictJson<ProofRequest>,
@@ -224,7 +228,9 @@ pub async fn proof(
             .as_deref()
             .ok_or_else(ApiError::unavailable)?,
         &peer.0.to_string(),
-        util::now(),
+        &credential.id,
+        "browser.proof",
+        None,
     )
     .await?;
     tx.commit().await?;
@@ -345,8 +351,12 @@ async fn observe_ip(
     client: &str,
     session: &str,
     ip: &str,
-    at: i64,
+    credential: &str,
+    source: &str,
+    event: Option<&str>,
 ) -> Result<()> {
+    relationships::lock(tx, client).await?;
+    let at = util::now();
     sqlx::query(
         "INSERT INTO entities(kind,id,first_seen) VALUES('ip',$1,$2) ON CONFLICT DO NOTHING",
     )
@@ -354,6 +364,7 @@ async fn observe_ip(
     .bind(at)
     .execute(&mut **tx)
     .await?;
-    sqlx::query("INSERT INTO observed_ips(client_id,session_id,ip,first_seen,last_seen) VALUES($1,$2,$3,$4,$4) ON CONFLICT(client_id,session_id,ip) DO UPDATE SET last_seen=EXCLUDED.last_seen").bind(client).bind(session).bind(ip).bind(at).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO observed_ips(id,client_id,session_id,ip,first_seen,last_seen,credential_id,last_credential_id,first_source,last_source,first_event_id,last_event_id) VALUES($1,$2,$3,$4,$5,$5,$6,$6,$7,$7,$8,$8) ON CONFLICT(client_id,session_id,ip) WHERE revoked_at IS NULL DO UPDATE SET last_seen=GREATEST(observed_ips.last_seen,EXCLUDED.last_seen),last_credential_id=EXCLUDED.last_credential_id,last_source=EXCLUDED.last_source,last_event_id=EXCLUDED.last_event_id,revision=observed_ips.revision+1")
+        .bind(util::token("oip_")).bind(client).bind(session).bind(ip).bind(at).bind(credential).bind(source).bind(event).execute(&mut **tx).await?;
     Ok(())
 }

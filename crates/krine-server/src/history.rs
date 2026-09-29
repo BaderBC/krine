@@ -193,7 +193,7 @@ async fn cleanup(app: &App) -> Result<()> {
         .bind(util::now())
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM observed_ips WHERE last_seen<$1")
+    sqlx::query("DELETE FROM observed_ips WHERE last_seen<$1 AND NOT has_corrections")
         .bind(util::now() - 2_592_000_000_i64)
         .execute(&mut *tx)
         .await?;

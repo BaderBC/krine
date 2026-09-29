@@ -1,7 +1,7 @@
 use crate::{
     App, admin,
     error::{ApiError, Result},
-    events, history, projection, util,
+    events, history, projection, relationships, util,
 };
 use axum::{
     Json,
@@ -51,6 +51,9 @@ pub async fn detail(
         Err(error) if error.dependency == Some("valkey") => None,
         Err(error) => return Err(error),
     };
+    if let Some(client) = &client {
+        relationships::lock(&mut tx, client).await?;
+    }
     let started = std::time::Instant::now();
     let at = util::now();
     let mut snapshot = Snapshot::default();
@@ -129,13 +132,6 @@ pub async fn detail(
         relations.push("client_id=").push_bind(client);
     } else if kind == "user" {
         relations.push("user_id=").push_bind(&id);
-    } else if kind == "ip" {
-        relations
-            .push("client_id IN (SELECT client_id FROM observed_ips WHERE ip=")
-            .push_bind(&id)
-            .push(" AND last_seen>=")
-            .push_bind(at - 2_592_000_000)
-            .push(")");
     } else {
         relations.push("false");
     }

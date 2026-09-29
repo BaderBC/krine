@@ -1,10 +1,10 @@
 use crate::{
-    App,
+    App, ApplicationCredential,
     error::{ApiError, Result},
     json::StrictJson,
-    projection, util,
+    projection, relationships, util,
 };
-use axum::{Json, extract::State};
+use axum::{Extension, Json, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Postgres, Row, Transaction};
@@ -178,16 +178,22 @@ pub struct Association {
     association_id: String,
     client_id: String,
     user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     #[serde(default = "empty_object")]
     metadata: Value,
 }
 pub async fn associate(
     State(app): State<App>,
+    Extension(credential): Extension<ApplicationCredential>,
     StrictJson(input): StrictJson<Association>,
 ) -> Result<Json<Value>> {
     util::identifier(&input.association_id)?;
     util::identifier(&input.client_id)?;
     util::user_identifier(&input.user_id)?;
+    if let Some(session) = &input.session_id {
+        util::identifier(session)?;
+    }
     util::object_limit(&input.metadata)?;
     let digest = util::canonical_digest(
         &serde_json::to_value(&input).map_err(|_| ApiError::invalid("Invalid association."))?,
@@ -197,6 +203,7 @@ pub async fn associate(
         .bind(format!("association:{}", input.association_id))
         .execute(&mut *tx)
         .await?;
+    relationships::lock(&mut tx, &input.client_id).await?;
     let existing = sqlx::query("SELECT * FROM associations WHERE id=$1")
         .bind(&input.association_id)
         .fetch_optional(&mut *tx)
@@ -212,13 +219,13 @@ pub async fn associate(
         }
         return Ok(Json(association_json(&row)));
     }
-    entity_exists(&mut tx, &input.client_id, None).await?;
+    entity_exists(&mut tx, &input.client_id, input.session_id.as_deref()).await?;
     let at = util::now();
     sqlx::query("INSERT INTO entities(kind,id,first_seen,metadata) VALUES('user',$1,$2,$3) ON CONFLICT(kind,id) DO UPDATE SET metadata=EXCLUDED.metadata").bind(&input.user_id).bind(at).bind(&input.metadata).execute(&mut *tx).await?;
-    let row=sqlx::query("INSERT INTO associations(id,digest,client_id,user_id,metadata,created_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *").bind(&input.association_id).bind(digest).bind(&input.client_id).bind(&input.user_id).bind(&input.metadata).bind(at).fetch_one(&mut *tx).await?;
+    let row=sqlx::query("INSERT INTO associations(id,digest,client_id,user_id,metadata,created_at,session_id,credential_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *").bind(&input.association_id).bind(digest).bind(&input.client_id).bind(&input.user_id).bind(&input.metadata).bind(at).bind(&input.session_id).bind(&credential.id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(association_json(&row)))
 }
 pub fn association_json(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"association_id":row.get::<String,_>("id"),"client_id":row.get::<String,_>("client_id"),"user_id":row.get::<String,_>("user_id"),"metadata":row.get::<Value,_>("metadata"),"created_at":row.get::<i64,_>("created_at"),"revoked_at":row.get::<Option<i64>,_>("revoked_at"),"provenance":"backend"})
+    json!({"association_id":row.get::<String,_>("id"),"client_id":row.get::<String,_>("client_id"),"user_id":row.get::<String,_>("user_id"),"metadata":row.get::<Value,_>("metadata"),"created_at":row.get::<i64,_>("created_at"),"revoked_at":row.get::<Option<i64>,_>("revoked_at"),"provenance":"backend","session_id":row.get::<Option<String>,_>("session_id"),"credential_id":row.get::<Option<String>,_>("credential_id"),"revision":row.get::<i64,_>("revision"),"revocation_reason":row.get::<Option<String>,_>("revocation_reason"),"revoked_by":row.get::<Option<String>,_>("revoked_by")})
 }

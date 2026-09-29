@@ -163,3 +163,22 @@ test('proof-bound context resolution validates and preserves the full interactio
   assert.equal(serialized.length, 2); assert.equal(serialized[0], serialized[1]);
   assert.equal(JSON.parse(serialized[1]).interaction.proof, input.interaction.proof);
 });
+
+
+test('association retries preserve corrected state and validate optional session provenance', async () => {
+  const association = { association_id: 'assoc_session', client_id: 'cli_1', user_id: 'user_1', session_id: 'ses_1' };
+  const receipt = { ...association, metadata: {}, created_at: now, revoked_at: now + 10, provenance: 'backend', credential_id: 'cred_1', revision: 2, revocation_reason: 'Wrong account', revoked_by: 'administrator' };
+  const bodies = [];
+  const client = sdk(async (_url, init) => { bodies.push(init.body); return json(receipt); });
+  assert.deepEqual(await client.associate(association), receipt);
+  assert.deepEqual(await client.associate(association), receipt);
+  assert.equal(bodies[0], bodies[1]);
+  for (const change of [{ session_id: 'ses_other' }, { session_id: null }, { revoked_at: -1 }, { revoked_at: now - 1 }, { revision: 0 }, { credential_id: [] }, { revocation_reason: 'x'.repeat(513) }]) {
+    await assert.rejects(sdk(async () => json({ ...receipt, ...change })).associate(association), error => error.code === 'invalid_response');
+  }
+  await assert.rejects(client.associate({ ...association, session_id: 2 }), error => error.code === 'invalid_input');
+  const legacy = { association_id: 'assoc_legacy', client_id: 'cli_1', user_id: 'user_1' };
+  const legacyReceipt = { ...legacy, metadata: {}, created_at: now, revoked_at: null, provenance: 'backend' };
+  assert.deepEqual(await sdk(async () => json(legacyReceipt)).associate(legacy), legacyReceipt);
+  assert.deepEqual(await sdk(async () => json({ ...legacyReceipt, session_id: null })).associate({ ...legacy, session_id: null }), { ...legacyReceipt, session_id: null });
+});
