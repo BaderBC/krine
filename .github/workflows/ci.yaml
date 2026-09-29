@@ -57,6 +57,7 @@ jobs:
         run: |
           docker compose -f compose.yaml -f compose.dev.yaml down
           docker compose -f compose.yaml -f compose.app.yaml build app
+          python3 scripts/check-app-secrets.py
           docker compose -f compose.yaml -f compose.app.yaml up -d --wait --wait-timeout 180
           python3 scripts/smoke-app.py http://127.0.0.1:8080
           docker compose -f compose.yaml -f compose.app.yaml restart app
@@ -64,7 +65,10 @@ jobs:
           python3 scripts/smoke-app.py http://127.0.0.1:8080 --after-restart
       - name: Dependency status on failure
         if: failure()
-        run: docker compose -f compose.yaml -f compose.dev.yaml ps
+        run: |
+          docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml ps -a
+          docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml logs --no-color --tail=100
+          docker compose -f compose.yaml -f compose.app.yaml ps -a -q app | xargs -r docker inspect --format '{{json .State}}'
       - name: Clean disposable stores
         if: always()
         run: docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml down --volumes --remove-orphans

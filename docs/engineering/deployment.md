@@ -43,7 +43,7 @@ The ingress must overwrite client-supplied forwarding headers. Set `KRINE_TRUSTE
 
 Terminate HTTPS at the ingress, enable its certificate renewal, and redirect HTTP to HTTPS there. Restrict host/Docker administration and the loopback service to trusted operators. Database traffic stays within the single-host network; using remote stores requires authenticated TLS and private routing.
 
-The entrypoint reads owner-only mounted secrets as root, then replaces itself with the application as UID/GID `10001`. The application has a read-only filesystem and no Linux capabilities. `SIGTERM` drains requests and stops its worker within Compose's 30-second grace period. The health check calls `/health/ready`; analytical export can lag while checks remain available. The image bundles CA certificates for provider HTTPS.
+The entrypoint briefly uses root with `DAC_READ_SEARCH` to read owner-only mounted secrets even when Linux preserves a different host UID, plus `SETUID`/`SETGID` to replace itself with the application as UID/GID `10001`. That identity change clears the capabilities; the application has a read-only filesystem, no Linux capabilities and `no-new-privileges`. `SIGTERM` drains requests and stops its worker within Compose's 30-second grace period. The health check calls `/health/ready`; analytical export can lag while checks remain available. The image bundles CA certificates for provider HTTPS.
 
 ## Local development
 

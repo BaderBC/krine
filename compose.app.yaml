@@ -21,7 +21,7 @@ services:
       clickhouse: {condition: service_started}
     read_only: true
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID]
+    cap_add: [SETUID, SETGID, DAC_READ_SEARCH]
     security_opt: [no-new-privileges:true]
     stop_grace_period: 30s
     mem_limit: 512m
