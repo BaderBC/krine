@@ -43,6 +43,7 @@ jobs:
           cargo test --workspace --locked
           pnpm test
           python3 scripts/check-example-isolation.py
+          python3 scripts/check-recovery-isolation.py
       - name: Dependency advisories
         run: |
           pnpm audit --prod
@@ -73,6 +74,10 @@ jobs:
           docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml up -d --wait --wait-timeout 180
           python3 scripts/check-example-secrets.py
           python3 scripts/smoke-example.py --provision-test-policy
+      - name: Rehearse stopped-boundary disaster recovery
+        run: |
+          docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml down
+          python3 scripts/verify-recovery.py --image krine:local --example-image krine-protected-app:local --ingress-image krine-example-ingress:local
       - name: Dependency status on failure
         if: failure()
         run: |
