@@ -4,7 +4,7 @@ Krine sits on protected application actions. Failure behavior is therefore part 
 
 ## Backend-side fallback
 
-The server SDK supports local fallback behavior when Krine itself is unavailable, including when a request times out. The default fallback is `allow`, with a configurable global default and per-check overrides.
+For an initial check whose outcome is unknown, the server SDK supports local fallback when Krine is unavailable, including request timeouts. The default is `ALLOW`, with global and per-check overrides.
 
 Example configuration:
 
@@ -16,15 +16,17 @@ can_change_email: deny
 
 Every result identifies whether it came from a Krine evaluation or local SDK fallback. Fallback also reports why evaluation was unavailable. An explicit denial, challenge requirement, invalid proof, authentication error or invalid request must not become a fallback allow.
 
-Exact SDK syntax remains an implementation decision.
+Use the [SDK guide](sdks.md#authoritative-application-integration) for configuration and the [error contract](sdks.md#error-and-retry-contract) for eligible availability failures.
 
 ## Idempotent checks and timeout recovery
 
-Use a stable operation key for one logical protected action attempt. Retries with the same key and business inputs recover that attempt and its final decision without repeating effects. Reusing a key with different business inputs is an error. Concurrent duplicates must not start independent evaluations.
+Persist one immutable request and stable operation key for each logical protected action attempt. Exact retries recover that attempt and its final decision without consuming another proof. Reusing a key with different business inputs is an error. Concurrent duplicates must not start independent evaluations.
 
 `CHALLENGE_REQUIRED` is an intermediate state. Verified challenge completion may advance the same attempt; an ordinary transport retry must not bypass verification. Final decisions remain stable across retries.
 
-A timeout means the result may be unknown, even if the SDK returns a configured fallback. Retry the same operation rather than starting another attempt. Keep recovery available for a documented retry window that outlives initial proof expiry. Challenge continuation also has a bounded lifetime chosen and documented during implementation.
+After observing a challenge, persist its trusted pending context and use `continueCheck` for every retry, including retries without verification evidence. Continuation never applies availability fallback: a Krine availability failure leaves the application action pending and raises a typed error. Switching back to the initial `check` API would lose this protection. See [pending verification](sdks.md#pending-verification-must-survive-processes).
+
+A timeout can leave the result unknown even when the SDK returns configured fallback. Recover the same saved request rather than starting another attempt. The [HTTP protocol](protocol.md#authoritative-checks) defines the retry window, `retry_until` and bounded challenge lifetime. Recovery of an accepted operation can outlive its proof's initial expiry.
 
 The customer's backend remains responsible for idempotent execution of its business operation, including when fallback allowed it to proceed. Replaying a Krine decision must not execute that operation twice.
 
@@ -34,7 +36,7 @@ Customer event properties may contain arbitrary JSON within a validated envelope
 
 Event submission is idempotent: retrying the same event identity and content has one effect; reusing that identity with different content is an error. A successful ingestion acknowledgement means the event's effect is visible to applicable supported metrics in checks started afterward for the affected entities. Return an error if that visibility cannot be guaranteed.
 
-Dashboard and analytical views may update later. The MVP promises no global ordering across independently submitted events; each metric documents its time basis and treatment of late events. Choose batching and storage mechanisms during implementation without weakening the acknowledgement guarantee.
+Dashboard and analytical views may update later. The MVP promises no global ordering across independently submitted events; each metric documents its time basis and treatment of late events. [ADR 0009](../decisions/0009-protocol-and-reliability-boundaries.md) and [ADR 0010](../decisions/0010-axum-runtime-and-durable-projection.md) define durable acceptance, idempotent projection and recovery; the [storage guide](storage.md) summarizes ownership.
 
 ## Why fallback is local
 
