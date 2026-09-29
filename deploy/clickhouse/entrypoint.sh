@@ -40,13 +40,19 @@ cat > /etc/clickhouse-server/users.d/krine-bootstrap.xml <<EOF
             <profile>default</profile>
             <quota>default</quota>
             <networks><ip>127.0.0.1</ip></networks>
-            <grants><query>GRANT CREATE DATABASE ON krine.*</query></grants>
+            <grants>
+                <query>GRANT CREATE DATABASE ON krine.*</query>
+                $(/bin/sh /opt/krine/clickhouse-diagnostics.sh --grants)
+            </grants>
         </krine_bootstrap>
     </users>
 </clickhouse>
 EOF
 unset password_hash
 chown clickhouse:clickhouse /etc/clickhouse-server/users.d/krine*.xml
+cat > /docker-entrypoint-initdb.d/90-krine-diagnostics.sh <<'EOF'
+/bin/sh /opt/krine/clickhouse-diagnostics.sh --maintain
+EOF
 cat > /docker-entrypoint-initdb.d/99-remove-krine-bootstrap.sh <<'EOF'
 rm /etc/clickhouse-server/users.d/krine-bootstrap.xml
 EOF
