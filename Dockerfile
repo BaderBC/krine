@@ -8,6 +8,7 @@ RUN corepack enable && corepack prepare pnpm@11.28.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/dashboard ./apps/dashboard
+COPY examples/protected-app/package.json ./examples/protected-app/package.json
 RUN pnpm install --frozen-lockfile && pnpm --filter @krine/dashboard build
 
 FROM ${RUST_IMAGE} AS backend

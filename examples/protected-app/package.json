@@ -1,0 +1,25 @@
+{
+  "name": "@krine/protected-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^24.21.0 || ^26.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --env-file-if-exists=.env dist/server/main.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@krine/browser": "workspace:^",
+    "@krine/protocol": "workspace:^",
+    "@krine/server": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "jsdom": "30.1.1",
+    "vite": "8.3.1"
+  }
+}

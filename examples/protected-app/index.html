@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f6f2" />
+    <title>Draftroom · Protected trial example</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header><a class="wordmark" href="/">Draftroom<span aria-hidden="true">.</span></a><span class="caption">A Krine integration example</span></header>
+    <main id="main">
+      <section id="login-panel">
+        <p class="eyebrow">Your next draft starts here</p>
+        <h1>A little room<br />to think.</h1>
+        <p class="intro">Sign in to claim seven days of Draftroom. One trial per account, protected by Krine.</p>
+        <form id="login-form">
+          <label for="account">Account</label>
+          <input id="account" name="username" autocomplete="username" spellcheck="false" required maxlength="32" aria-describedby="login-help" />
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="128" />
+          <p id="login-help" class="muted">Use a demo account from your local <code>accounts.json</code>.</p>
+          <button type="submit" id="sign-in">Sign in</button>
+        </form>
+      </section>
+      <section id="account-panel" hidden>
+        <div class="account-line"><span id="account-name"></span><button id="sign-out" class="text-button" type="button">Sign out</button></div>
+        <p class="eyebrow">Seven days, on us</p>
+        <h1 id="trial-heading" tabindex="-1" aria-describedby="trial-description">Make space for<br />your next idea.</h1>
+        <p id="trial-description" class="intro">Start your seven-day trial. Your account can receive this benefit once.</p>
+        <button id="claim" type="button">Start free trial</button>
+        <section id="attempt-panel" class="attempt" hidden aria-label="Trial request">
+          <h2 id="attempt-heading" tabindex="-1" aria-describedby="attempt-description"></h2>
+          <p id="attempt-description"></p>
+          <div id="verification" aria-label="Verification"></div>
+          <button id="cancel-verification" type="button" hidden>Finish later</button>
+          <button id="resume" type="button" hidden>Resume request</button>
+          <details id="result-details" hidden>
+            <summary>Authorization details</summary>
+            <dl id="result-fields"></dl>
+          </details>
+        </section>
+      </section>
+      <p id="notice" tabindex="-1" role="status" aria-live="polite" aria-atomic="true"></p>
+      <button id="retry-setup" type="button" hidden>Retry connection</button>
+    </main>
+    <footer>The application grants the trial. Krine evaluates the request.</footer>
+    <script type="module" src="/src/client.ts"></script>
+  </body>
+</html>

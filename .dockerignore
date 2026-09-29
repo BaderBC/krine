@@ -6,6 +6,7 @@
 **/.env
 **/.env.*
 **/node_modules
+**/.data
 .pnpm-store
 **/dist
 target
