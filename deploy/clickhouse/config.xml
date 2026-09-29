@@ -9,6 +9,53 @@
         <log remove="remove" />
         <errorlog remove="remove" />
     </logger>
+    <!-- Keep operational query/crash evidence without the upstream per-second
+         profiling collectors. Upgrade existing log tables during loopback init. -->
+    <query_log replace="replace">
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>event_date</partition_by>
+        <ttl>event_time + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>60000</flush_interval_milliseconds>
+        <max_size_rows>8192</max_size_rows>
+        <reserved_size_rows>128</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>4096</buffer_size_rows_flush_threshold>
+        <flush_on_crash>false</flush_on_crash>
+        <enable_user_query_log>true</enable_user_query_log>
+    </query_log>
+    <crash_log replace="replace">
+        <database>system</database>
+        <table>crash_log</table>
+        <partition_by>event_date</partition_by>
+        <ttl>event_time + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>1000</flush_interval_milliseconds>
+        <max_size_rows>1024</max_size_rows>
+        <reserved_size_rows>128</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>512</buffer_size_rows_flush_threshold>
+        <flush_on_crash>true</flush_on_crash>
+    </crash_log>
+    <trace_log remove="remove" />
+    <query_thread_log remove="remove" />
+    <query_views_log remove="remove" />
+    <part_log remove="remove" />
+    <background_schedule_pool_log remove="remove" />
+    <text_log remove="remove" />
+    <metric_log remove="remove" />
+    <error_log remove="remove" />
+    <instrumentation_trace_log remove="remove" />
+    <query_metric_log remove="remove" />
+    <asynchronous_metric_log remove="remove" />
+    <iceberg_metadata_log remove="remove" />
+    <delta_lake_metadata_log remove="remove" />
+    <opentelemetry_span_log remove="remove" />
+    <processors_profile_log remove="remove" />
+    <asynchronous_insert_log remove="remove" />
+    <backup_log remove="remove" />
+    <s3queue_log remove="remove" />
+    <blob_storage_log remove="remove" />
+    <aggregated_zookeeper_log remove="remove" />
+    <zookeeper_log remove="remove" />
+    <zookeeper_connection_log remove="remove" />
     <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
     <max_connections>256</max_connections>
 </clickhouse>

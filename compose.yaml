@@ -54,6 +54,8 @@ services:
 
   clickhouse:
     <<: *service
+    labels:
+      io.krine.diagnostics-revision: "bounded-1"
     image: clickhouse/clickhouse-server:26.8.11.7@sha256:741c97b58cc8fef0f4958ba302c4a3c2d66ffa2f0bfe35b57dff31700d62cf11
     entrypoint: [/bin/sh, /opt/krine/clickhouse-entrypoint.sh]
     environment:
@@ -64,6 +66,7 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./deploy/clickhouse/entrypoint.sh:/opt/krine/clickhouse-entrypoint.sh:ro
+      - ./deploy/clickhouse/diagnostics.sh:/opt/krine/clickhouse-diagnostics.sh:ro
       - ./deploy/clickhouse/config.xml:/etc/clickhouse-server/config.d/krine.xml:ro
     healthcheck:
       test: [CMD-SHELL, 'CLICKHOUSE_PASSWORD="$$(cat /run/secrets/clickhouse_password)" clickhouse-client --host "$$(hostname)" --user krine --database krine --query "SELECT 1" | grep -qx 1']
