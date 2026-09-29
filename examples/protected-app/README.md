@@ -4,6 +4,30 @@ Draftroom demonstrates a real, durable seven-day trial entitlement protected by 
 
 This is a small integration example with three generated accounts. It is not an account-management product. The production SDKs and Krine API perform every trust interaction; there is no outcome selector or verification bypass.
 
+## Run with Docker
+
+From the repository root, with Docker Compose 2.24.4 or newer:
+
+```sh
+./scripts/up.sh --local --example
+```
+
+Open **http://127.0.0.1:8080** and sign in with `deploy/secrets/admin_password`. Review and publish `can_claim_trial` using the policy below. Open **http://localhost:3000** for Draftroom. Read the generated account passwords locally:
+
+```sh
+docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml exec --user 10001:10001 example cat /var/lib/draftroom/accounts.json
+```
+
+Account passwords and SQLite data live in the private `example_data` named volume, outside the image and checkout. Subsequent runs preserve accounts, grants, attempts and event delivery. To stop the stack while retaining data, use the same Compose arguments with `down`; do not add `--volumes`. Keep using `--example` when upgrading this installation. The helper closes ingress and drains the example before stopping the old Krine writer.
+
+Set `KRINE_HTTP_PORT` and `KRINE_EXAMPLE_PORT` to free loopback ports before running the command. If `10.203.80.0/24` overlaps a host route or Docker network, set `KRINE_EXAMPLE_NETWORK_PREFIX` to the first three octets of an unused private /24 (for example `10.203.81`). The ingress uses `.2`; Docker allocates other addresses from `.128/25`, outside the trusted address. Keep these overrides consistent across commands; changing a used network requires stopping this stack with `down` first, preserving volumes.
+
+The local Nginx ingress publishes both ports. It replaces incoming forwarding headers with its actual socket peer, and both services trust only its exact address. Docker Desktop/VM routing may present a gateway address instead of a unique host visitor address; that is the real address visible at this boundary, shared by both requests. The example does not invent a loopback IP. Only Krine joins the storage network; the example and ingress use a separate network. Direct application ports are not published.
+
+For credential rotation, issue a new browser key and server secret in Krine Settings. Save them in separate owner-only files, set `KRINE_EXAMPLE_PUBLIC_KEY_FILE` and `KRINE_EXAMPLE_SERVER_SECRET_FILE` to their absolute paths, then rerun the command. Verify the example before revoking its previous keys. Keep these overrides for future restarts. The default paths use the original bootstrap keys; changing Krine's bootstrap files cannot rotate or restore managed credentials. The SQLite volume and original business-operation records remain unchanged across this restart.
+
+This preset deliberately enables local HTTP and development cookies. For public deployment, configure a sanitizing HTTPS ingress and secure origins as described under [Deployment boundary](#deployment-boundary); do not expose these local ports publicly or place another proxy in front without redesigning and testing the trusted hop boundary.
+
 ## Run against native Krine
 
 Use Node.js 24.21 LTS and pnpm 11.28.2. From the repository root, build the workspace packages:
@@ -34,7 +58,7 @@ Open **http://localhost:3000**. On first start, `.data/accounts.json` contains i
 
 These commands assume a native Krine listener at `127.0.0.1:8080` and the generated keys in `deploy/secrets`. If you already use other credentials or a separate development fixture, set `KRINE_PUBLIC_KEY_FILE` and `KRINE_SECRET_KEY_FILE` to those exact keys instead. Set each credential through either its environment variable or its `_FILE` path, never both.
 
-**Do not substitute the containerized `./scripts/up.sh --local` listener into this native path.** A browser entering Docker and a browser entering the native application may have different observed IPs. Proof binding must reject that mismatch. Container ingress integration requires a shared, explicitly trusted proxy boundary; never hard-code an IP or trust arbitrary forwarding headers to make a proof pass.
+Use the complete Docker path above when Krine runs in Docker. A browser entering Docker and a browser entering this native application may have different observed IPs; proof binding must reject that mismatch. Never hard-code an IP or trust arbitrary forwarding headers to make a proof pass.
 
 ## Review the trial policy
 
@@ -97,3 +121,5 @@ pnpm --filter @krine/protected-app test
 ```
 
 Tests bind disposable loopback ports and use private temporary SQLite files. They cover real HTTP authentication, CSRF/Host checks, trusted IP handling, immutable inputs, concurrent retries, stored pending verification, timeouts, malformed responses, fallback distinctions, durable event delivery, expired retry windows, and actual process crash/restart/exclusive ownership. No running Krine stores are used by this suite.
+
+The image/ingress regression is `python3 scripts/smoke-example.py --provision-test-policy`, run by CI after starting the opt-in stack in a fresh `krine-ci` project. It also accepts a fresh `krine-test-*` project and refuses to replace an existing trial check. Unlike normal startup, this explicit test harness publishes a disposable fixture policy. It verifies forwarding-header spoofing, browser CORS, evaluated Allow/Deny, concurrent duplicates, container recreation, managed-key rotation, durable grant count, network isolation and the actual non-root process capabilities. It writes separate `smoke-example-browser-key` and `smoke-example-server-secret` files in the test secrets directory and revokes only that fixture’s bootstrap keys. To reopen that test fixture, select these files with the example credential overrides above. It leaves test data intact for inspection.

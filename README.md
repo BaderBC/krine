@@ -31,6 +31,8 @@ Open [127.0.0.1:8080](http://127.0.0.1:8080). Sign in with the value in `deploy/
 
 Create a named check in **Checks**, edit its policy, and review it before publishing. The local preset permits browser participation from `http://localhost:3000`; set `KRINE_ALLOWED_ORIGINS` to your application's exact origin. Use the browser key in `deploy/secrets/browser_public_key` and keep `deploy/secrets/server_secret` exclusively on your application's backend.
 
+To try a complete protected application, run `./scripts/up.sh --local --example`, then open [localhost:3000](http://localhost:3000). Follow the [trial example](examples/protected-app/README.md#run-with-docker) to read its generated account passwords and explicitly publish its trial policy. The opt-in ingress gives both services the same observed browser IP; no policy is seeded at startup.
+
 Local HTTP enables development cookies and is intended for your machine. Follow the [deployment guide](docs/engineering/deployment.md) for HTTPS, proxy trust, backups and upgrades.
 
 ## Integrate an application

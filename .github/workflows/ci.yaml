@@ -42,6 +42,7 @@ jobs:
         run: |
           cargo test --workspace --locked
           pnpm test
+          python3 scripts/check-example-isolation.py
       - name: Dependency advisories
         run: |
           pnpm audit --prod
@@ -63,12 +64,19 @@ jobs:
           docker compose -f compose.yaml -f compose.app.yaml restart app
           docker compose -f compose.yaml -f compose.app.yaml up -d --wait --wait-timeout 180
           python3 scripts/smoke-app.py http://127.0.0.1:8080 --after-restart
+      - name: Build and exercise protected application ingress
+        run: |
+          docker compose -f compose.yaml -f compose.app.yaml down
+          docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml build example example-ingress
+          docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml up -d --wait --wait-timeout 180
+          python3 scripts/check-example-secrets.py
+          python3 scripts/smoke-example.py --provision-test-policy
       - name: Dependency status on failure
         if: failure()
         run: |
-          docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml ps -a
-          docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml logs --no-color --tail=100
+          docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml ps -a
+          docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml logs --no-color --tail=100
           docker compose -f compose.yaml -f compose.app.yaml ps -a -q app | xargs -r docker inspect --format '{{json .State}}'
       - name: Clean disposable stores
         if: always()
-        run: docker compose -f compose.yaml -f compose.app.yaml -f compose.dev.yaml down --volumes --remove-orphans
+        run: docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.dev.yaml -f compose.example.yaml down --volumes --remove-orphans

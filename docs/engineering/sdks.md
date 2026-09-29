@@ -1,5 +1,7 @@
 # TypeScript SDKs
 
+Run the [protected trial application](../../examples/protected-app/README.md) for a complete integration with authenticated accounts, durable business effects, retries and verification continuation.
+
 `@krine/browser` obtains browser context, fresh proofs and verification evidence. `@krine/server` submits authoritative facts and evaluates protected actions. Both use `@krine/protocol` for wire types, validation and bounded transport. None of these packages has a third-party runtime dependency. Keep the server package and its secret key out of browser bundles.
 
 The workspace uses pnpm 11.28.2, pinned in `packageManager`, and TypeScript 5.9.3. Workspace development uses Node.js 24.21 LTS, pinned in `.node-version`; Node.js 26 is also supported. The server SDK requires Node.js 22 or later with built-in `fetch`. The browser SDK targets modern browsers with Fetch, Web Crypto and ES2022; blocked storage and unavailable optional evidence are supported. Packages export ESM and TypeScript declarations.

@@ -21,6 +21,7 @@ RUN cargo build --locked --release -p krine-server
 FROM ${RUNTIME_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/secrets && chmod 0700 /run/secrets \
     && groupadd --gid 10001 krine && useradd --uid 10001 --gid krine --no-create-home --shell /usr/sbin/nologin krine
 COPY --from=backend /build/target/release/krine-server /usr/local/bin/krine-server
 COPY --from=dashboard /build/apps/dashboard/dist /opt/krine/dashboard
