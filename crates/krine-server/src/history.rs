@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Row;
 
-async fn clickhouse(
+pub(crate) async fn clickhouse(
     app: &App,
     query: &str,
     params: Vec<(&str, String)>,
@@ -56,50 +56,133 @@ async fn clickhouse(
     }
     String::from_utf8(bytes).map_err(|_| ApiError::unavailable())
 }
-pub async fn export(app: &App) -> Result<()> {
-    clickhouse(app,"CREATE TABLE IF NOT EXISTS history (kind LowCardinality(String), id String, at Int64, payload String) ENGINE=ReplacingMergeTree ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY",vec![],None).await?;
+fn table(app: &App, versioned: bool) -> String {
+    let name = if versioned { "history_v2" } else { "history" };
+    #[cfg(test)]
+    if !app.provider_test.history_suffix.is_empty() {
+        return format!("{name}_{}", app.provider_test.history_suffix);
+    }
+    let _ = app;
+    name.into()
+}
+async fn initialize(app: &App) -> Result<bool> {
     let mut tx = app.db.begin().await?;
-    let rows=sqlx::query("SELECT id,kind,at,payload FROM outbox WHERE exported_at IS NULL ORDER BY at LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('history-v2-migration',0))")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO analytical_migrations(name) VALUES('history_v2') ON CONFLICT DO NOTHING",
+    )
+    .execute(&mut *tx)
+    .await?;
+    let migration = sqlx::query("SELECT * FROM analytical_migrations WHERE name='history_v2'")
+        .fetch_one(&mut *tx)
+        .await?;
+    if migration.get::<bool, _>("completed") {
+        return Ok(true);
+    }
+    let legacy = table(app, false);
+    let versioned = table(app, true);
+    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {legacy} (kind LowCardinality(String), id String, at Int64, payload String) ENGINE=ReplacingMergeTree ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY"),vec![],None).await?;
+    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {versioned} (kind LowCardinality(String), id String, at Int64, payload String, revision UInt64) ENGINE=ReplacingMergeTree(revision) ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY"),vec![],None).await?;
+    let params = vec![
+        ("param_kind", migration.get::<String, _>("cursor_kind")),
+        ("param_id", migration.get::<String, _>("cursor_id")),
+    ];
+    let rows=clickhouse(app,&format!("SELECT kind,id FROM {legacy} FINAL WHERE (kind,id)>({{kind:String}},{{id:String}}) ORDER BY kind,id LIMIT 100 FORMAT JSONEachRow"),params.clone(),None).await?;
+    let last = rows
+        .lines()
+        .last()
+        .map(serde_json::from_str::<Value>)
+        .transpose()
+        .map_err(|_| ApiError::unavailable())?;
+    if let Some(last) = last {
+        let kind = last["kind"].as_str().ok_or_else(ApiError::unavailable)?;
+        let id = last["id"].as_str().ok_or_else(ApiError::unavailable)?;
+        let mut params = params;
+        params.extend([
+            ("param_last_kind", kind.into()),
+            ("param_last_id", id.into()),
+        ]);
+        // Checkpoint after each bounded copy. A lost acknowledgement safely
+        // repeats revision one; the explicit version keeps later states newer.
+        clickhouse(app,&format!("INSERT INTO {versioned} SELECT kind,id,at,payload,1 FROM {legacy} FINAL WHERE (kind,id)>({{kind:String}},{{id:String}}) AND (kind,id)<=({{last_kind:String}},{{last_id:String}})"),params,None).await?;
+        sqlx::query(
+            "UPDATE analytical_migrations SET cursor_kind=$1,cursor_id=$2 WHERE name='history_v2'",
+        )
+        .bind(kind)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Ok(false);
+    }
+    sqlx::query("UPDATE analytical_migrations SET completed=true WHERE name='history_v2'")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+pub async fn export(app: &App) -> Result<()> {
+    if !initialize(app).await? {
+        return Ok(());
+    }
+    // Capture complete immutable snapshots, then release the database before
+    // network I/O. Newer revisions can coalesce into these slots during export.
+    let rows=sqlx::query("SELECT id,logical_id,revision,kind,at,payload FROM delivery_outbox WHERE exported_at IS NULL ORDER BY at,id LIMIT 100").fetch_all(&app.db).await?;
     if rows.is_empty() {
-        tx.rollback().await?;
         return cleanup(app).await;
     }
     let mut body = String::new();
     let mut ids = Vec::new();
+    let mut revisions = Vec::new();
     for row in rows {
         let id: String = row.get("id");
-        body.push_str(&serde_json::to_string(&json!({"id":id,"kind":row.get::<String,_>("kind"),"at":row.get::<i64,_>("at"),"payload":row.get::<Value,_>("payload").to_string()})).map_err(|_|ApiError::unavailable())?);
+        body.push_str(&serde_json::to_string(&json!({"id":row.get::<String,_>("logical_id"),"revision":row.get::<i64,_>("revision"),"kind":row.get::<String,_>("kind"),"at":row.get::<i64,_>("at"),"payload":row.get::<Value,_>("payload").to_string()})).map_err(|_|ApiError::unavailable())?);
         body.push('\n');
         ids.push(id);
+        revisions.push(row.get::<i64, _>("revision"));
     }
     clickhouse(
         app,
-        "INSERT INTO history FORMAT JSONEachRow",
+        &format!("INSERT INTO {} FORMAT JSONEachRow", table(app, true)),
         vec![],
         Some(body),
     )
     .await?;
-    sqlx::query("UPDATE outbox SET exported_at=$1 WHERE id=ANY($2)")
-        .bind(util::now())
-        .bind(&ids)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
+    #[cfg(test)]
+    if let Some(pause) = &app.provider_test.after_export {
+        pause.arrived.notify_one();
+        pause.resume.notified().await;
+    }
+    acknowledge(app, &ids, &revisions).await?;
     cleanup(app).await
+}
+async fn acknowledge(app: &App, ids: &[String], revisions: &[i64]) -> Result<()> {
+    // An acknowledgement for revision N cannot erase pending revision N+1.
+    sqlx::query("UPDATE delivery_outbox d SET exported_at=$1 FROM unnest($2::text[],$3::bigint[]) AS delivered(id,revision) WHERE d.id=delivered.id AND d.revision=delivered.revision")
+        .bind(util::now()).bind(ids).bind(revisions).execute(&app.db).await?;
+    Ok(())
 }
 async fn cleanup(app: &App) -> Result<()> {
     let cutoff = util::now() - 172_800_000;
     // Never remove unexported envelopes. Retry guards outlive their supported
     // windows; analytical retention belongs to ClickHouse rather than PG.
     let mut tx = app.db.begin().await?;
-    sqlx::query("DELETE FROM events e WHERE accepted_at<$1 AND projected AND EXISTS(SELECT 1 FROM outbox o WHERE o.id='event:'||e.id AND o.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM operations o WHERE accepted_at<$1 AND response IS NOT NULL AND EXISTS(SELECT 1 FROM outbox b WHERE b.id='decision:'||(o.response->>'decision_id') AND b.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM events e WHERE accepted_at<$1 AND projected AND EXISTS(SELECT 1 FROM delivery_outbox o WHERE o.id='event:'||e.id AND o.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM operations o WHERE accepted_at<$1 AND state='final' AND response IS NOT NULL AND EXISTS(SELECT 1 FROM delivery_outbox b WHERE COALESCE(b.logical_id,b.id)='decision:'||(o.response->>'decision_id') AND b.revision=o.history_revision AND b.exported_at IS NOT NULL)").bind(cutoff).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM operations WHERE accepted_at<$1 AND response IS NULL")
         .bind(cutoff)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM outbox WHERE at<$1 AND exported_at IS NOT NULL")
+    sqlx::query("DELETE FROM delivery_outbox WHERE at<$1 AND exported_at IS NOT NULL")
         .bind(cutoff)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM provider_revisions r WHERE created_at<$1 AND NOT EXISTS(SELECT 1 FROM provider_current c WHERE c.capability=r.capability AND c.revision=r.revision) AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.state<>'final' AND (o.envelope->'provider_revisions'->r.capability->>'revision')::bigint=r.revision)")
+        .bind(util::now()-2_592_000_000_i64).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM provider_tests WHERE expires_at<$1")
+        .bind(util::now())
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM admin_mutations WHERE created_at<$1")
@@ -182,7 +265,10 @@ async fn list(
     } else {
         query.push_str(",payload");
     }
-    query.push_str(" FROM history FINAL WHERE kind={kind:String}");
+    query.push_str(&format!(
+        " FROM {} FINAL WHERE kind={{kind:String}}",
+        table(app, true)
+    ));
     let mut params = vec![
         ("param_kind", kind.to_owned()),
         ("param_limit", (limit + 1).to_string()),
@@ -287,14 +373,14 @@ pub async fn decisions(
     list(&app, "decision", f, None).await
 }
 async fn get(app: &App, kind: &str, id: &str) -> Result<Json<Value>> {
-    let pending: Option<Value> = sqlx::query_scalar("SELECT payload FROM outbox WHERE id=$1")
+    let pending: Option<Value> = sqlx::query_scalar("SELECT payload FROM delivery_outbox WHERE COALESCE(logical_id,id)=$1 ORDER BY revision DESC LIMIT 1")
         .bind(format!("{kind}:{id}"))
         .fetch_optional(&app.db)
         .await?;
     if let Some(value) = pending {
         return Ok(Json(value));
     }
-    let response=clickhouse(app,"SELECT payload FROM history FINAL WHERE kind={kind:String} AND id={id:String} LIMIT 1 FORMAT JSONEachRow",vec![("param_kind",kind.into()),("param_id",format!("{kind}:{id}"))],None).await?;
+    let response=clickhouse(app,&format!("SELECT payload FROM {} FINAL WHERE kind={{kind:String}} AND id={{id:String}} LIMIT 1 FORMAT JSONEachRow",table(app,true)),vec![("param_kind",kind.into()),("param_id",format!("{kind}:{id}"))],None).await?;
     let row: Value = serde_json::from_str(response.trim()).map_err(|_| ApiError::absent())?;
     Ok(Json(
         serde_json::from_str(row["payload"].as_str().ok_or_else(ApiError::unavailable)?)

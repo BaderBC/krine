@@ -24,6 +24,8 @@ base64 = "0.22"
 ipnet = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+time = { version = "0.3", features = ["parsing", "formatting"] }
+uuid = { version = "1", features = ["v4"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

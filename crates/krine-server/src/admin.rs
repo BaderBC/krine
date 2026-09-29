@@ -11,7 +11,7 @@ use axum::{
     http::HeaderMap,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use krine_core::{Policy, RuleAction, UnknownAction, ValidatedPolicy};
+use krine_core::{Policy, ValidatedPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Postgres, QueryBuilder, Row, Transaction};
@@ -100,7 +100,7 @@ pub async fn list_checks(
     let items=rows.iter().take(limit as usize).map(|r|json!({"name":r.get::<String,_>("name"),"description":r.get::<String,_>("description"),"active_version":r.get::<Option<i64>,_>("active_version"),"draft_revision":r.get::<i64,_>("draft_revision"),"has_draft_changes":r.get::<bool,_>("has_draft_changes"),"updated_at":r.get::<i64,_>("updated_at"),"recent":null})).collect::<Vec<_>>();
     Ok(Json(json!({"items":items,"next_cursor":next})))
 }
-async fn mutation(
+pub(crate) async fn mutation(
     app: &App,
     headers: &HeaderMap,
     path: &str,
@@ -138,7 +138,7 @@ async fn mutation(
     };
     Ok((tx, key, digest, response))
 }
-async fn finish(
+pub(crate) async fn finish(
     mut tx: Transaction<'_, Postgres>,
     key: String,
     digest: String,
@@ -245,17 +245,7 @@ pub async fn publish(
     let policy: Policy =
         serde_json::from_value(row.get("draft")).map_err(|_| ApiError::unavailable())?;
     ValidatedPolicy::try_from(policy.clone())?;
-    if policy
-        .rules
-        .iter()
-        .any(|r| r.then == RuleAction::Challenge || r.on_unknown == UnknownAction::Challenge)
-    {
-        return Err(ApiError::new(
-            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "capability_unconfigured",
-            "Configure verification before publishing a challenge policy.",
-        ));
-    }
+    crate::providers::validate_publication(&mut tx, &name, &policy).await?;
     let version = row.get::<Option<i64>, _>("active_version").unwrap_or(0) + 1;
     let at = util::now();
     let restored = row.get::<Option<i64>, _>("restored_from_version");
@@ -347,11 +337,6 @@ pub async fn metric(Path((name, version)): Path<(String, u32)>) -> Result<Json<V
 pub async fn setup(State(app): State<App>) -> Json<Value> {
     Json(
         json!({"public_key":app.config.public_key,"browser_url":app.config.public_url,"server_url":app.config.public_url,"allowed_origins":app.config.allowed_origins,"sdk":{"browser_package":"@krine/browser","server_package":"@krine/server"}}),
-    )
-}
-pub async fn providers() -> Json<Value> {
-    Json(
-        json!({"items":[{"capability":"ip_intelligence","provider":"proxycheck","enabled":false,"revision":0,"config":{},"has_secret":false,"status":"unconfigured","checked_at":null,"dependent_checks":[]},{"capability":"verification","provider":"turnstile","enabled":false,"revision":0,"config":{},"has_secret":false,"status":"unconfigured","checked_at":null,"dependent_checks":[]}]}),
     )
 }
 

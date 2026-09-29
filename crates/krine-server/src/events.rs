@@ -82,7 +82,10 @@ pub async fn entity_exists(
     Ok(())
 }
 pub async fn capacity(app: &App, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    let pending: i64 = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM outbox WHERE exported_at IS NULL) + (SELECT COUNT(*) FROM operations WHERE response IS NULL)")
+    // An unfinished attempt keeps one delivery slot reserved even after export.
+    // Its next transition or final result replaces that slot instead of growing
+    // the queue while admission is already at capacity.
+    let pending: i64 = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM delivery_outbox WHERE exported_at IS NULL) + (SELECT COUNT(*) FROM operations o WHERE state<>'final' AND NOT EXISTS(SELECT 1 FROM delivery_outbox d WHERE d.logical_id='decision:'||(o.envelope->>'decision_id') AND d.exported_at IS NULL))")
         .fetch_one(&mut **tx)
         .await?;
     if pending >= app.config.max_pending_outbox {
@@ -98,7 +101,7 @@ pub async fn outbox(
     payload: &Value,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO outbox(id,kind,at,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+        "INSERT INTO delivery_outbox(id,logical_id,kind,at,payload) VALUES($1,$1,$2,$3,$4) ON CONFLICT DO NOTHING",
     )
     .bind(format!("{kind}:{id}"))
     .bind(kind)

@@ -5,7 +5,7 @@ use crate::{
     json::StrictJson,
     util,
 };
-use axum::{Extension, Json, extract::State};
+use axum::{Extension, Json, extract::State, http::HeaderMap};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -185,6 +185,8 @@ pub struct Proof {
     pub session_id: String,
     pub check: String,
     pub ip: String,
+    #[serde(default)]
+    pub hostname: String,
     pub issued_at: i64,
     pub expires_at: i64,
     pub session_issued_at: i64,
@@ -193,6 +195,7 @@ pub struct Proof {
 pub async fn proof(
     State(app): State<App>,
     Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
     StrictJson(input): StrictJson<ProofRequest>,
 ) -> Result<Json<serde_json::Value>> {
     util::identifier(&input.check)?;
@@ -232,6 +235,12 @@ pub async fn proof(
         session_id: session.session_id.ok_or_else(ApiError::unavailable)?,
         check: input.check,
         ip: peer.0.to_string(),
+        hostname: reqwest::Url::parse(
+            crate::auth::header(&headers, "origin").ok_or_else(ApiError::forbidden)?,
+        )
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .ok_or_else(ApiError::forbidden)?,
         issued_at,
         expires_at: issued_at + 60_000,
         session_issued_at: session.issued_at,

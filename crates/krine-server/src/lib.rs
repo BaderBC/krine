@@ -9,6 +9,8 @@ mod events;
 mod history;
 mod json;
 mod projection;
+mod provider_http;
+mod providers;
 mod util;
 
 use axum::{
@@ -27,6 +29,8 @@ pub struct App {
     pub db: PgPool,
     pub redis: ConnectionManager,
     pub http: reqwest::Client,
+    #[cfg(test)]
+    provider_test: ProviderTest,
 }
 impl App {
     pub async fn connect(
@@ -37,6 +41,9 @@ impl App {
             .acquire_timeout(Duration::from_secs(2))
             .after_connect(|connection, _| {
                 Box::pin(async move {
+                    sqlx::query("SET krine.writer_generation='3'")
+                        .execute(&mut *connection)
+                        .await?;
                     sqlx::query("SET statement_timeout='3s'")
                         .execute(&mut *connection)
                         .await?;
@@ -68,6 +75,8 @@ impl App {
             db,
             redis,
             http,
+            #[cfg(test)]
+            provider_test: ProviderTest::default(),
         })
     }
 }
@@ -105,7 +114,12 @@ pub fn router(app: App) -> Router {
         )
         .route("/v1/admin/entities/{kind}/{id}", get(entities::detail))
         .route("/v1/admin/setup", get(admin::setup))
-        .route("/v1/admin/providers", get(admin::providers))
+        .route("/v1/admin/providers", get(providers::list))
+        .route("/v1/admin/providers/{capability}", put(providers::save))
+        .route(
+            "/v1/admin/providers/{capability}/tests",
+            post(providers::test),
+        )
         .route("/v1/admin/activity/events", get(history::events))
         .route("/v1/admin/activity/events/{id}", get(history::event))
         .route("/v1/admin/activity/decisions", get(history::decisions))
@@ -126,7 +140,28 @@ pub async fn worker(app: App, mut shutdown: tokio::sync::watch::Receiver<bool>) 
     loop {
         tokio::select! { _=shutdown.changed()=>break,_=interval.tick()=> {
             match tokio::time::timeout(Duration::from_secs(5),projection::ensure_ready(&app)).await {Ok(Ok(()))=>{},Ok(Err(e))=>tracing::warn!(code=e.code,"projection recovery pending"),Err(_)=>tracing::warn!("projection recovery deadline exceeded")}
+            if let Err(e)=checks::expire_pending(&app).await{tracing::warn!(code=e.code,"challenge expiry pending");}
             if let Err(e)=history::export(&app).await{tracing::warn!(code=e.code,"history export pending");}
         }}
     }
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct ProviderTest {
+    ip_endpoint: Option<String>,
+    verify_endpoint: Option<String>,
+    history_suffix: String,
+    after_verification: Option<std::sync::Arc<VerificationPause>>,
+    after_export: Option<std::sync::Arc<VerificationPause>>,
+}
+
+#[cfg(test)]
+mod provider_integration;
+
+#[cfg(test)]
+#[derive(Default)]
+struct VerificationPause {
+    arrived: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
 }

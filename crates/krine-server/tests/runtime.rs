@@ -1,6 +1,6 @@
-//! Outside-in protocol tests against the real three-store deployment. Run with
-//! the documented KRINE_* environment and `cargo test -p krine-server --test
-//! runtime -- --ignored --test-threads=1`; this suite creates isolated IDs.
+//! Outside-in protocol tests against three isolated stores. Use the documented
+//! `scripts/with-dev-env.py --isolated-stores` helper; unique IDs alone do not
+//! isolate migrations, projection recovery, or shared request budgets.
 use krine_server::{App, config::Config};
 use redis::AsyncCommands;
 use reqwest::{Client, RequestBuilder, StatusCode};
@@ -26,9 +26,11 @@ impl Runtime {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::WARN)
             .try_init();
-        let app = App::connect(Config::load().expect("test configuration"))
-            .await
-            .expect("real databases");
+        let mut config = Config::load().expect("test configuration");
+        // Provider scenarios share the isolated store and can authenticate many
+        // fixtures in one minute. These flow tests must not depend on that bucket.
+        config.login_rate = 100000;
+        let app = App::connect(config).await.expect("real databases");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let router = krine_server::router(app.clone());
@@ -260,7 +262,7 @@ async fn secure_vertical_slice_and_recovery() {
     )
     .await;
     // A claimed but not finalized operation survives process cancellation.
-    sqlx::query("UPDATE operations SET response=NULL,detail=NULL WHERE id=$1")
+    sqlx::query("UPDATE operations SET response=NULL,detail=NULL,state='ready' WHERE id=$1")
         .bind(&operation)
         .execute(&runtime.app.db)
         .await
@@ -721,7 +723,7 @@ async fn large_decision_pages_and_typed_entity_history() {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM outbox WHERE id=ANY($1) AND exported_at IS NOT NULL",
+                "SELECT COUNT(DISTINCT COALESCE(logical_id,id)) FROM delivery_outbox WHERE COALESCE(logical_id,id)=ANY($1) AND exported_at IS NOT NULL",
             )
             .bind(&exported_ids)
             .fetch_one(&runtime.app.db)
