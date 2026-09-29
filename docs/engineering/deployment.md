@@ -140,13 +140,14 @@ Archive TTL changes persist once, including their materialization mutation. The 
 
 On a production Linux host, set `vm.overcommit_memory=1` for Valkey's persistence forks and review its startup warnings. This is a host-wide setting; the stack deliberately does not modify it. Docker VMs may also report ClickHouse thread or delay-accounting limitations. Size and tune a production host using measured workload and upstream operating guidance.
 
-Volume persistence does not protect against host or disk loss. Back up PostgreSQL with `pg_dump` or a WAL-based system and ClickHouse with its supported backup mechanism. Include configuration, the exact image/revision and encrypted secrets. PostgreSQL contains operation ownership and replay protection as well as configuration: losing accepted records is a security-relevant data loss, not merely a history gap. Choose a recovery point objective accordingly.
-
-Test restoration to a separate deployment before relying on backups. For a coordinated backup, stop the application writer, finish any acknowledged requests, and take database backups at that stopped boundary. Preserve ClickHouse history: exported PostgreSQL reliability envelopes expire after 48 hours and cannot recreate older analytical history. A newer PostgreSQL outbox can re-export recent records safely; duplicate export does not create duplicate activity.
-
-During recovery, keep ingress closed. Restore durable PostgreSQL state and ClickHouse history from the intended recovery boundary. Start Valkey with a new empty data volume rather than restoring old short-lived credentials or proofs. The backend rebuilds current event counters from retained durable envelopes and establishes a fresh generation before readiness. Existing client/session tokens are invalidated, so subsequent participation receives new context; historical entities and backend-known account history remain stored. Application keys and their revocation state survive in PostgreSQL. Unclaimed proofs must be obtained again. Recorded operations remain retryable from PostgreSQL and retain their unique proof ownership. Never delete operation records merely to make recovery pass.
-
-Verify readiness, an authoritative event/check flow, same-operation retry, history availability and expected configuration before reopening ingress. If the PostgreSQL backup loses accepted operations, reconcile the application's durable business-operation records before restoring protected traffic; Krine cannot infer lost authorizations from an older database. Application business-action idempotency remains mandatory. An older Valkey snapshot is detected by incarnation/watermark checks for counter recovery, but it is not a substitute for this controlled disaster-recovery procedure.
+Volume persistence does not protect against host or disk loss. Follow the
+[backup and recovery procedure](recovery.md) to capture PostgreSQL, stopped
+ClickHouse history, private configuration and, when used, the example's complete
+SQLite volume at one stopped application boundary. It includes concrete restore
+commands and a disposable end-to-end recovery rehearsal. Choose a recovery point
+objective that accounts for accepted operations and reconcile business records
+before reopening an older backup. Restore into a new deployment with empty
+Valkey; preserve durable replay ownership and credential revocations.
 
 The backend owns application schema migrations. Container initialization creates storage identities and maintains the explicitly owned ClickHouse diagnostic logs; it never migrates or deletes application history.
 
