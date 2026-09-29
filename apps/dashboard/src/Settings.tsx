@@ -1,4 +1,5 @@
-import { checkUrl } from "./addresses";
+import { Connection } from "./Connection";
+import { checkUrl, uniqueSelector } from "./addresses";
 import { useEffect, useRef, useState } from "react";
 import { useBeforeUnload, useBlocker, useSearchParams } from "react-router-dom";
 import { Loading, ResourceError, PageTitle, useResource } from "./shared";
@@ -56,7 +57,11 @@ function validSetup(value: unknown): value is Setup {
 export function Settings() {
   const setup = useResource<Setup>("/setup", validSetup);
   const [params] = useSearchParams();
-  const check = params.get("check") ?? "can_claim_trial";
+  const selected = uniqueSelector(params, "check");
+  const selectedCheck = /^[a-zA-Z0-9_.:-]{1,128}$/.test(selected)
+    ? selected
+    : null;
+  const check = selectedCheck ?? "can_claim_trial";
   const config = setup.data;
   const [providerWork, setProviderWork] = useState<SettingsWork>({
     dirty: false,
@@ -91,7 +96,7 @@ export function Settings() {
   return (
     <>
       <PageTitle title="Settings" />
-      {params.has("check") && (
+      {selectedCheck && (
         <p className="help">
           <Link
             to={`${checkUrl(check)}${params.has("provider") ? "&view=draft" : ""}`}
@@ -105,6 +110,10 @@ export function Settings() {
       )}
       <section id="connection">
         <h2>Application connection</h2>
+        <Connection
+          check={selectedCheck}
+          invalidSelection={params.has("check") && selectedCheck === null}
+        />
         {setup.error && <ResourceError resource={setup} />}
         {config ? (
           <>

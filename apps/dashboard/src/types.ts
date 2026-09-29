@@ -52,6 +52,7 @@ export interface Version {
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;
+  retention?: unknown;
 }
 export interface Metric {
   name: string;
@@ -102,6 +103,7 @@ export interface Decision {
   user_id: string | null;
   ip: string | null;
   source: "evaluation" | "request_error" | "fallback";
+  reason_summary?: unknown;
 }
 export interface DecisionDetail extends Decision {
   policy?: Policy;
@@ -245,4 +247,60 @@ export interface RelationshipDetail {
   relationship: Relationship;
   audit: Page<RelationshipAudit>;
   recalculation: "complete";
+}
+
+export interface HistoryRetention {
+  days: number;
+  requested_days: number;
+  applying: boolean;
+  available_since: number;
+}
+export interface Receipt {
+  received_at: number;
+  basis: "tracked" | "retained_history";
+  record: {
+    kind: "event" | "decision";
+    id: string;
+    availability: "available" | "pending" | "not_retained" | "unavailable";
+  };
+}
+export interface ConnectionObservations {
+  tracked_since: number;
+  check: string | null;
+  client_evidence: Receipt | null;
+  backend_event: Receipt | null;
+  check_attempt: Receipt | null;
+}
+export interface ReasonEvidence {
+  path: number[];
+  reference: Reference;
+  observed: Observation;
+  observed_truncated: boolean;
+  test:
+    | { op: "compare"; comparison: Comparison; value: Scalar }
+    | { op: "in"; values: Scalar[] }
+    | { op: "between"; min: number; max: number }
+    | { op: "known" };
+  test_truncated: boolean;
+  result: "true" | "false" | "unknown";
+  provenance: { source: string; observed_at: number } | null;
+}
+export interface ReasonSummary {
+  schema_version: 1;
+  reason: string;
+  outcome: "ALLOW" | "DENY" | "CHALLENGE_REQUIRED";
+  scope: "decisive_rule" | "otherwise";
+  rule_id: string | null;
+  rules: {
+    rule_id: string;
+    position: number;
+    route: string;
+    result: "true" | "false" | "unknown";
+    compound: boolean;
+    evidence: ReasonEvidence[];
+    evidence_truncated: boolean;
+  }[];
+  rules_truncated: boolean;
+  provider_revisions: Record<string, { revision: number; enabled: boolean }>;
+  truncated: boolean;
 }
