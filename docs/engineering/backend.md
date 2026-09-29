@@ -91,7 +91,8 @@ checks, unconfigured challenge publication, explicit provider unknowns, context
 resolution, hostile origins, CSRF, source-IP spoofing, duplicate JSON keys,
 payload limits, and the maximum policy condition depth. An additional ignored library test forces a
 projection rollback between metric reads and checks that the snapshot is rejected;
-run it with `./scripts/with-dev-env.py --isolated-stores cargo test -p krine-server --lib -- --ignored`. This also runs a
+build the SDKs/example with `pnpm --filter @krine/protected-app... build`, then run
+`./scripts/with-dev-env.py --isolated-stores cargo test -p krine-server --lib -- --ignored --test-threads=1`. This also runs a
 20,000-event retained-window rebuild within the worker recovery budget.
 
 No proof, session credential, server credential or provider token is retained in
@@ -122,6 +123,7 @@ stores must also be isolated; fixture namespaces are no substitute for isolating
 the complete suite. The guarded helper supplies the dedicated Valkey URL:
 
 ```sh
+pnpm --filter @krine/protected-app... build
 ./scripts/with-dev-env.py --isolated-stores cargo test -p krine-server --lib provider_integration -- --ignored --test-threads=1 --nocapture
 ```
 
@@ -131,6 +133,9 @@ outage, repeated and concurrent tokens, cross-step/operation replay, provider
 success before a lost commit, lease fencing, policy/configuration changes while
 pending, second challenges, worker expiry and delayed analytical delivery. Adapter
 unit tests separately exercise malformed, oversized, redirected and slow bodies.
+The [combined application test](../../examples/protected-app/README.md#verify)
+also exercises both built SDKs, sequential verification and durable business
+deduplication through the actual protected application process.
 
 Stop the previous application before applying migration 0003. PostgreSQL rejects
 old writer generations after migration, including old outbox acknowledgements.

@@ -122,4 +122,23 @@ pnpm --filter @krine/protected-app test
 
 Tests bind disposable loopback ports and use private temporary SQLite files. They cover real HTTP authentication, CSRF/Host checks, trusted IP handling, immutable inputs, concurrent retries, stored pending verification, timeouts, malformed responses, fallback distinctions, durable event delivery, expired retry windows, and actual process crash/restart/exclusive ownership. No running Krine stores are used by this suite.
 
+The ignored Rust suite also runs the built application and both SDKs against actual
+Axum, PostgreSQL, Valkey and ClickHouse. With the dedicated test stores configured
+as described in the [backend guide](../../docs/engineering/backend.md), run:
+
+```sh
+pnpm --filter @krine/protected-app... build
+./scripts/with-dev-env.py --isolated-stores cargo test -p krine-server --locked \
+  protected_application_verifies_and_recovers_with_real_sdks_and_stores -- --ignored
+```
+
+CI includes this test in its full ignored suite after building the workspace. The
+test fails if built application artifacts are absent. Only the external widget
+and provider response are controlled: the browser SDK's documented adapter checks
+the exact site/action/binding, and the real Rust provider adapter validates the
+HTTP response. Two sequential steps, rejected bindings, token reuse, provider
+failure/timeout, concurrent retries, three process crashes with lost acknowledgements,
+durable event delivery and one business grant are checked together. This proves
+the local integration contract; it does not establish a live Turnstile pairing.
+
 The image/ingress regression is `python3 scripts/smoke-example.py --provision-test-policy`, run by CI after starting the opt-in stack in a fresh `krine-ci` project. It also accepts a fresh `krine-test-*` project and refuses to replace an existing trial check. Unlike normal startup, this explicit test harness publishes a disposable fixture policy. It verifies forwarding-header spoofing, browser CORS, evaluated Allow/Deny, concurrent duplicates, container recreation, managed-key rotation, durable grant count, network isolation and the actual non-root process capabilities. It writes separate `smoke-example-browser-key` and `smoke-example-server-secret` files in the test secrets directory and revokes only that fixture’s bootstrap keys. To reopen that test fixture, select these files with the example credential overrides above. It leaves test data intact for inspection.

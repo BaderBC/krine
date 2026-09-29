@@ -16,6 +16,8 @@ use std::{
     time::Instant,
 };
 
+mod protected_application;
+
 #[derive(Default)]
 struct MockState {
     tokens: BTreeMap<String, Value>,
@@ -64,10 +66,16 @@ async fn rejected(request: RequestBuilder, code: &str) {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_browser_origin(None).await
+    }
+    async fn with_browser_origin(origin: Option<String>) -> Self {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::WARN)
             .try_init();
         let mut config = Config::load().unwrap();
+        if let Some(origin) = origin {
+            config.allowed_origins = vec![origin];
+        }
         config.valkey_url = std::env::var("KRINE_PROVIDER_TEST_VALKEY_URL")
             .expect("dedicated test Valkey required");
         config.server_rate = 100000;
