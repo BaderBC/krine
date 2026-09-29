@@ -28,7 +28,7 @@ export function App() {
   }, []);
   useEffect(() => {
     if (reauthenticate) dialog.current?.showModal();
-    else dialog.current?.close();
+    else if (dialog.current?.open) dialog.current.close();
   }, [reauthenticate]);
   useEffect(() => {
     document.title = `${location.pathname.split("/")[1]?.replace(/^./, (value) => value.toUpperCase()) || "Checks"} · Krine`;
@@ -65,7 +65,7 @@ export function App() {
   }
   const loginForm = (
     <form className="login-form" onSubmit={(event) => void login(event)}>
-      <h1>{reauthenticate ? "Your session expired." : "Sign in to Krine."}</h1>
+      <h1>{reauthenticate ? "Sign in again." : "Sign in to Krine."}</h1>
       <p className="muted">
         Use the administrator password configured for this installation.
         {reauthenticate && " Your unsaved work remains open."}

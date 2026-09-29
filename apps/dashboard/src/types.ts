@@ -112,7 +112,18 @@ export interface DecisionDetail extends Decision {
     trace: RuleTrace[];
   };
   relationship_ids?: string[];
-  provider_revisions?: Record<string, number>;
+  provider_revisions?: Record<string, { revision: number; enabled: boolean }>;
+  provider_observations?: Record<
+    string,
+    { revision: number; status: string; detail: string; observed_at: number }
+  >;
+  verification_transitions?: {
+    sequence: number;
+    at: number;
+    challenge_id: string | null;
+    state: string;
+    detail: string;
+  }[];
   requests?: { at: number; kind: string; result: string }[];
 }
 export interface Event {
@@ -157,13 +168,16 @@ export interface Setup {
   sdk: { browser_package: string; server_package: string };
 }
 export interface Provider {
-  capability: string;
-  provider: string;
+  capability: "ip_intelligence" | "verification";
+  provider: "proxycheck" | "turnstile";
   enabled: boolean;
   revision: number;
   config: Record<string, unknown>;
   has_secret: boolean;
   status: string;
+  message: string;
   checked_at: number | null;
   dependent_checks: string[];
+  dependent_versions: { check: string; version: number }[];
+  dependents_token: string;
 }

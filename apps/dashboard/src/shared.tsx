@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { InvestigationLink as Link } from "./navigation";
-import { api, encode, errorMessage } from "./api";
+import { api, encode, readErrorMessage } from "./api";
 import type { Page } from "./types";
 
 export function useResource<T>(path: string | null) {
@@ -39,7 +39,7 @@ export function useResource<T>(path: string | null) {
         setState((previous) => ({
           ...previous,
           loading: false,
-          error: errorMessage(error),
+          error: readErrorMessage(error),
         }));
     }
   }, [path]);

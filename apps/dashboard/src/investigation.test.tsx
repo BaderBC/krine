@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { api, ApiError } from "./api";
@@ -153,7 +159,11 @@ describe("investigation context", () => {
         selector: "summary",
       }),
     );
-    await user.click(screen.getByRole("link", { name: "ip.risk v1" }));
+    await user.click(
+      within(document.querySelector("#evidence")!).getByRole("link", {
+        name: "ip.risk v1",
+      }),
+    );
     expect(
       (
         await screen.findByRole("link", { name: "Back to Activity" })
@@ -208,7 +218,9 @@ describe("honest resource state", () => {
       new ApiError(404, "not_found", "The resource does not exist."),
     );
     mount(path);
-    await screen.findAllByText("The resource does not exist.");
+    await screen.findAllByText(
+      "This record was not found. Check the link or return to the previous page.",
+    );
     await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
   });
   it("retains rows with an explicit stale marker and last successful refresh after a failed refresh", async () => {

@@ -51,6 +51,8 @@ Before completion: full relevant checks, actual running application, primary end
 | `f94e101` | Complete application image and deployment/CI | Fresh `application_delivery_qa` approved exact 20-file manifest. Independent HTTP/auth/CSRF/CSP/static-route tests, rootless/read-only execution, secret handling, isolation and dependency-audit guards, dependency outages, persistence through restart and graceful shutdown. Provider-combined image and final recovery remain separate gates. |
 | `23d1880` | Clean-checkout CI build order | Fresh deployment QA reproduced missing protocol artifacts in a clean archive, then passed build, typecheck and all 97 tests with workspace build preceding typecheck. |
 | `9c612d5` | Linux secret-file startup | Fresh `linux_startup_qa` reproduced UID1001/mode0600 access failure and verified startup-only read capability, zero capabilities after gosu, no-new-privileges and read-only mounts/root filesystem. GitHub run `36502963726` passed complete build, real-store tests, image startup/HTTP/restart and dependency audits. |
+| `c4dc990` | Intelligence providers and durable verification | Ordinary QA plus dedicated security review resolved publication/dependency races, continuation capacity amplification and incoherent provider pinning. Final 59-test suite, differential PostgreSQL interleavings, replay/fencing and delayed history delivery passed. Native generation-3 upgrade preserves existing historical decisions. |
+| `808ce5c` | Proof-bound context resolution | Ordinary QA, dedicated security review and fresh combined integration QA approved the unchanged seven-file patch. Independent read/consume races, renewal/expiry, authentication and SDK failure probes passed. Combined 60 Rust and 98 JavaScript tests passed; provider hostname and migration behavior remain intact. |
 
 The first runtime/dashboard are vertical slices, not a reduction of MVP scope. Runtime contracts are in `docs/engineering/{protocol,backend,sdks}.md` and ADRs; consult them rather than inferring from this ledger.
 
@@ -84,7 +86,7 @@ Provider direction is fixed-origin proxycheck v3 and Turnstile, with bounded red
 
 ### Proof-bound context prerequisite
 
-The protected-app author found an accepted security gap: independently resolved credentials can describe client B while the action proof evaluates client A, allowing pre-check association/event evidence to target the wrong context. Repair is isolated in `/private/tmp/krine-proof-context`, branch `fix/proof-bound-context`, from accepted `23d1880`; provider files in the main tree remain frozen. The existing authenticated resolver gains mutually exclusive modes: ordinary context credentials, or `{interaction: {proof, check, ip}}`. Interaction mode derives client/session IDs directly from the valid issued proof, validates freshness/action/normalized authoritative IP, and returns proof expiry without consuming or authorizing it. Mixed modes are rejected. Credential-only resolution remains for continuous context events. The browser API stays unchanged: a second bearer pair is unnecessary because the proof already binds the context, and requiring live context credentials would introduce rotation races and shorten a still-valid proof’s lifetime. Protected-action examples use interaction resolution before associations/events. Fresh independent QA and adversarial security review precede integration; provider-combined integration gets further verification. The protected application is paused for this prerequisite.
+The protected-app author found a security gap: independently resolved credentials could describe client B while the action proof evaluated client A, allowing pre-check association/event evidence to target the wrong context. Accepted repair `808ce5c` adds mutually exclusive modes to the authenticated resolver: ordinary context credentials, or `{interaction: {proof, check, ip}}`. Interaction mode derives client/session IDs directly from the valid issued proof, validates freshness/action/normalized authoritative IP, and returns proof expiry without consuming or authorizing it. Mixed modes are rejected. Credential-only resolution remains for continuous context events. The browser API stays unchanged: a second bearer pair is unnecessary because the proof already binds the context, and requiring live context credentials would introduce rotation races and shorten a still-valid proof's lifetime. Protected-action examples use interaction resolution before associations/events. The protected application has resumed on the accepted integrated API.
 
 ### Provider UI and product refinements
 
@@ -92,11 +94,21 @@ After completing its independent product review, `first_milestone_founder` has a
 
 Provider UI is frozen in `/private/tmp/krine-provider-ui-sha256.txt` (15 paths), with handoff `/private/tmp/krine-provider-ui-handoff.md`. Author verification: 107 tests including StrictMode provider flows, typecheck/build, and controlled browser keyboard/narrow-layout walks. Fresh QA and real matching-backend write walkthrough remain required.
 
-Fresh `provider_ui_qa` owns that independent review. `proof_context_qa` separately reviews the seven-file proof resolver unit in `/private/tmp/krine-proof-context`; author evidence and hashes are in `/private/tmp/krine-proof-context-{handoff.md,manifest.json}`. The focused resolver wrapper isolates a unique PostgreSQL schema and private Valkey and must never select broader tests. `provider_snapshot_implementer` owns the narrow pinning-race repair and its controlled PostgreSQL regression; ordinary and security rereview follow.
+`provider_ui_qa` owns independent UI review and repair rereview. Proof resolver evidence and hashes are in `/private/tmp/krine-proof-context-{handoff.md,manifest.json}`. Its accepted-base focused wrapper isolates a unique PostgreSQL schema and private Valkey and must never select broader tests.
 
-Proof-context ordinary QA approved the seven-file freeze, including independent read-only concurrency, IP normalization, expiry and proof-replay probes. The now-completed provider snapshot QA agent has a distinct dedicated security-review assignment for the proof unit, which it did not author or ordinarily review. Merged provider integration remains a separate gate after that verdict.
+Proof-context ordinary QA and a distinct dedicated security review approved the seven-file freeze. Independent probes covered read-only concurrency, competing proof consumption, credential renewal/expiry, IP normalization and SDK failures without fallback. Reports `/private/tmp/krine-proof-context-{qa,security}-review.md`. Fresh integration QA approved exact rebased commit `808ce5c` after patch-equivalence inspection and targeted real-store provider/proof/SDK checks; report `/private/tmp/krine-proof-integration-qa.md`. Root fast-forwarded and pushed main.
 
 UI QA reproduced an accepted P2: a lost provider-save response followed by HTTP 401/403 clears the original pending mutation although authentication precedes idempotency replay and cannot prove the original outcome. Preserve the frozen request through reauthentication. The adjacent draft controller also clears intent on every 4xx; QA is independently checking publication/recovery there. Malformed successful provider responses must not strand the form or silently discard unknown mutation outcomes. Repairs and fresh rereview remain required.
+
+Fresh UI QA approved the repaired 19-file unit after 154 tests, all eight original independent failure probes, browser malformed-response/reauthentication recovery and its own matching-backend walkthrough. It verified two-tab revision conflict, preserved candidate, retest, exact dependency review and disconnect. Final verification revision 7 is disabled; IP revision 0 remains unconfigured. Reports `/private/tmp/krine-provider-ui-qa-final.md` and `/private/tmp/krine-provider-ui-qa-approved-sha256.txt`. No real customer provider pairing is claimed. The provider-write window is released.
+
+### Application credentials
+
+`credentials_implementer` owns isolated `/private/tmp/krine-credentials`, branch `feat/application-credentials` from accepted `c4dc990`; migration 0005 and ADR 0012 are reserved for it. Implement minimal browser-key/server-secret list/create/revoke, first-response-only server secrets, metadata-only replay, immediate durable revocation and one-time bootstrap that cannot resurrect revoked credentials after restart. Hash server credentials; retain audit and existing origin boundaries. No organizations, roles or additional scopes.
+
+Agreed endpoint shape: paginated `GET /v1/admin/credentials`, `POST` with `{kind,label}`, and `POST /credentials/{id}/revocations`. Creation returns credential metadata plus first-only secret and explicit revealed/unrecoverable/not-applicable status; replay reads current revocation state. Setup's selected public key becomes nullable when none is active, with selected credential ID and active counts. Frontend follows the reviewed contract in a later unit. Fresh QA and additional security review are required.
+
+The upcoming credential/settings frontend unit must also fix the existing local SDK reference: generated constructors currently omit `allowInsecureHttp: true` for HTTP deployment URLs, which both SDKs reject. Keep HTTPS snippets strict; show the explicit development option only for HTTP. Root independently reproduced constructor rejection. This is a tracked setup gap, not a waiver of the provider/recovery unit's independent approval.
 
 ### Deployment integration
 
@@ -126,7 +138,7 @@ Association correction/provenance remain required. This was milestone direction,
 
 ## Remaining sequence
 
-1. Finish provider security repairs; fresh ordinary QA and security rereview; accept/commit/push.
+1. Finish the protected application's native Allow/abuse-Deny/Unknown/verification flows on accepted integration `808ce5c`, then independent QA and security review.
 2. Complete tested provider configuration UI and Founder simplifications against stable contracts.
 3. Minimal credentials: create/revoke, secret shown once, metadata-only replay, immediate revocation and no bootstrap resurrection on restart.
 4. Inspectable backend/observed relationship provenance and session/source context; reversible reasoned correction/restoration; correct current metrics and immutable historical decisions. Coordinate any narrow SDK association contract addition with fresh review.
@@ -139,7 +151,7 @@ Routine engineering choices need no founder approval. Ask only for material chan
 
 ## Runtime and test isolation
 
-Root-owned development API: exec session `16125`, 127.0.0.1:8080, admin Origin `http://127.0.0.1:5174`. Dashboard Vite: session `74940`, port 5174. Unrelated port 5173 is preserved. Current API includes **unaccepted provider code matching migration 0003**, with providers unconfigured. Do not apply migration 0004 while that process runs; coordinate stop/build/start after review.
+Root-owned development API: exec session `85276`, 127.0.0.1:8080, admin Origin `http://127.0.0.1:5174`. Dashboard Vite: session `74940`, port 5174. Unrelated port 5173 is preserved. Current API is accepted integrated commit `808ce5c`, writer generation 3 and migrations through 0004. Root gracefully stopped old processes before upgrades and verified readiness; an existing historical decision survived the provider migration. After the author UI walkthrough, IP intelligence is unconfigured at revision 0; verification is disabled at revision 3 with retained synthetic configuration and dependency `qa_provider_ui_author_20260929` v1. Coordinate further provider writes with independent UI QA.
 
 Shared development stores: Compose project `krine`, PostgreSQL 15432 / Valkey 16379 / ClickHouse 18123; ignored `deploy/secrets/`. Root wrapper `/private/tmp/krine-runtime-env.py` loads secrets without printing them. It is for the running development application, **not destructive tests**. Scoped pnpm 11.28.2 executable `/tmp/krine-pnpm-tool/node_modules/.bin/pnpm`; development Node 24.21 LTS, Rust 1.98.0. SDK consumer requirements are separate. Local Docker DNS workaround uses verified downloaded image digests and `/private/tmp/krine-local-images.yaml`; do not change shared daemon configuration.
 
@@ -148,6 +160,8 @@ Shared development stores: Compose project `krine`, PostgreSQL 15432 / Valkey 16
 Every migration/recovery/destructive fixture must prove isolation for **all three stores**. The accepted `scripts/with-dev-env.py --isolated-stores` verifies a named `krine-test-*`/`krine-ci` project, actual loopback port ownership, no foreign URL/file overrides and no running app. QA independently rejected 15 unsafe configurations and a real extra app-labelled container. Temporary provider wrappers must also isolate all stores for broad selections; never use the older provider-only wrapper until repaired.
 
 Available guarded fixture: `krine-test-deployment`, ports 25432/26379/28123, secrets `deploy/secrets/test-deployment`, no application. Coordinate ownership before tests. Do not reset shared stores or unrelated containers. Separate HTTP cookie jars avoid overwriting root's Chrome admin session: host cookies are shared across ports.
+
+The credential implementer now owns a broad fixture run that applies unaccepted migration 0005 to the **dedicated test public schema only**. Older accepted builds must use a fresh database/schema for further tests; never roll that shared test schema back or route them to the native stores. Native schema remains through 0004.
 
 ## Dependency audit disposition
 

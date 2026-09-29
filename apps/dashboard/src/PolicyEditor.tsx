@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { InvestigationLink as Link } from "./navigation";
 import { encode } from "./api";
 import {
   actionLabel,
@@ -21,6 +22,17 @@ import type {
   Scalar,
   ValueType,
 } from "./types";
+
+function metricUnit(metric: Metric): string {
+  if (metric.name.endsWith(".age_seconds")) return "Seconds";
+  if (metric.name === "client.user_count_30d")
+    return "Distinct users · 30 days";
+  if (metric.name.endsWith(".event_count_5m"))
+    return "Distinct backend events · 5 minutes";
+  if (metric.name === "ip.risk") return "Risk · 0 to 1";
+  if (metric.name === "ip.country") return "Two-letter country code";
+  return metric.value_type === "boolean" ? "True or false" : metric.value_type;
+}
 
 function ScalarField({
   value,
@@ -386,9 +398,7 @@ function ConditionEditor({
         <div className="metric-help">
           <p>{metric.description}</p>
           <p className="help">
-            {metric.value_type}
-            {metric.range && ` · ${metric.range[0]}–${metric.range[1]}`} · v
-            {metric.version}. {metric.missing}{" "}
+            {metricUnit(metric)} · v{metric.version}. {metric.missing}{" "}
             <Link
               to={`/metrics/${encode(metric.name)}?version=${metric.version}`}
             >
@@ -481,6 +491,7 @@ export function PolicyEditor({
   metrics: Metric[];
   onChange: (policy: Policy) => void;
 }) {
+  const { name } = useParams();
   const [expanded, setExpanded] = useState<string | null>(
     policy.rules[0]?.id ?? null,
   );
@@ -625,8 +636,11 @@ export function PolicyEditor({
             {(rule.then === "CHALLENGE" || rule.on_unknown === "CHALLENGE") && (
               <>
                 <VerificationBranches />
-                <Link className="small" to="/settings#providers">
-                  Verification settings
+                <Link
+                  className="small"
+                  to={`/settings?provider=verification${name ? `&check=${encode(name)}` : ""}#providers`}
+                >
+                  Configure verification
                 </Link>
               </>
             )}

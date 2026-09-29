@@ -23,6 +23,18 @@ export function mutation(
   return { path, method, body, key: crypto.randomUUID() };
 }
 
+// Authentication, throttling and timeouts can precede a durable replay lookup.
+// They cannot establish whether an earlier submission of this intent committed.
+export function definitiveMutationFailure(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![401, 403, 408, 429].includes(error.status) &&
+    error.code !== "invalid_response"
+  );
+}
+
 export class Api {
   csrf = "";
   onUnauthorized: (() => void) | undefined;
@@ -37,6 +49,8 @@ export class Api {
         signal: controller.signal,
         headers: { Accept: "application/json", ...init.headers },
       });
+      if ([401, 403].includes(response.status) && path !== "/session")
+        this.onUnauthorized?.();
       if (response.status === 204) return undefined as T;
       let body: unknown;
       try {
@@ -51,8 +65,6 @@ export class Api {
         );
       }
       if (!response.ok) {
-        if (response.status === 401 && path !== "/session")
-          this.onUnauthorized?.();
         const error = (
           body as {
             error?: {
@@ -109,6 +121,17 @@ export class Api {
             body: JSON.stringify({ password }),
           },
     );
+    if (
+      !session ||
+      typeof session.csrf_token !== "string" ||
+      !session.csrf_token ||
+      !Number.isSafeInteger(session.expires_at)
+    )
+      throw new ApiError(
+        200,
+        "invalid_response",
+        "Krine could not confirm your session. Sign in again.",
+      );
     this.csrf = session.csrf_token;
   }
 }
@@ -118,4 +141,24 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
     : "The request failed. Please retry.";
+}
+
+export function readErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError))
+    return "Could not load this information. Retry to refresh the page.";
+  if (error.status === 401)
+    return "Sign in again, then retry loading this information.";
+  if (error.status === 403)
+    return "You do not have access to this information.";
+  if (error.status === 404)
+    return "This record was not found. Check the link or return to the previous page.";
+  if (error.status === 429)
+    return "Too many requests. Wait briefly, then retry loading this information.";
+  if (
+    error.status === 0 ||
+    error.status >= 500 ||
+    error.code === "invalid_response"
+  )
+    return "Could not load this information from Krine. Retry when the connection is available.";
+  return error.message;
 }

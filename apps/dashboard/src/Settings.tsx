@@ -1,6 +1,9 @@
 import { useSearchParams } from "react-router-dom";
-import { Loading, ResourceError, PageTitle, Time, useResource } from "./shared";
-import type { Provider, Setup } from "./types";
+import { Loading, ResourceError, PageTitle, useResource } from "./shared";
+import { InvestigationLink as Link } from "./navigation";
+import { encode } from "./api";
+import { Providers } from "./Providers";
+import type { Setup } from "./types";
 
 function Code({ children }: { children: string }) {
   return (
@@ -12,13 +15,24 @@ function Code({ children }: { children: string }) {
 
 export function Settings() {
   const setup = useResource<Setup>("/setup");
-  const providers = useResource<{ items: Provider[] }>("/providers");
   const [params] = useSearchParams();
   const check = params.get("check") ?? "can_claim_trial";
   const config = setup.data;
   return (
     <>
       <PageTitle title="Settings" />
+      {params.has("check") && (
+        <p className="help">
+          <Link
+            to={`/checks/${encode(check)}${params.has("provider") ? "?view=draft" : ""}`}
+          >
+            {params.has("provider")
+              ? "Return to policy draft"
+              : "Back to check"}{" "}
+            · {check}
+          </Link>
+        </p>
+      )}
       <section id="connection">
         <h2>Application connection</h2>
         {setup.error && <ResourceError resource={setup} />}
@@ -52,8 +66,10 @@ export function Settings() {
               The public key identifies this installation. Keep the server
               secret exclusively in your application backend.
             </p>
-            <h3>Browser · @krine/browser 0.1.0</h3>
-            <Code>{`import { KrineBrowser } from '@krine/browser';
+            <details id="integration-reference">
+              <summary>SDK integration reference</summary>
+              <h3>Browser · @krine/browser 0.1.0</h3>
+              <Code>{`import { KrineBrowser } from '@krine/browser';
 
 const browser = new KrineBrowser({
   url: ${JSON.stringify(config.browser_url)},
@@ -65,8 +81,8 @@ await browser.initialize();
 const { proof } = await browser.prepare(${JSON.stringify(check)});
 // Send proof with the request to your own backend.
 // Retain it unchanged for retries of this action.`}</Code>
-            <h3>Application backend · @krine/server 0.1.0</h3>
-            <Code>{`import { KrineServer } from '@krine/server';
+              <h3>Application backend · @krine/server 0.1.0</h3>
+              <Code>{`import { KrineServer } from '@krine/server';
 
 const krine = new KrineServer({
   url: ${JSON.stringify(config.server_url)},
@@ -99,22 +115,23 @@ if (result.outcome === 'CHALLENGE_REQUIRED') {
   // Persist result, then execute your action exactly once.
   // result.source distinguishes evaluation from local fallback.
 }`}</Code>
-            <p className="help">
-              This integration sketch uses your application’s durable operation
-              record. The application must persist pending/final results,
-              validate verification input, and prevent duplicate action
-              execution. Never trust a browser-supplied pending or final result.
-            </p>
-            <p>
-              Initial proofs expire after 60 seconds and bind to the observed IP
-              and check. Retry the same operation ID and immutable request; do
-              not replace its proof. Stop retries at the returned{" "}
-              <code>retry_until</code>. A known verification requirement never
-              becomes Allow through a continuation timeout.
-            </p>
-            <details>
-              <summary>Backend events and user relationships</summary>
-              <Code>{`// Browser: send opaque credentials to your authenticated application.
+              <p className="help">
+                This integration sketch uses your application’s durable
+                operation record. The application must persist pending/final
+                results, validate verification input, and prevent duplicate
+                action execution. Never trust a browser-supplied pending or
+                final result.
+              </p>
+              <p>
+                Initial proofs expire after 60 seconds and bind to the observed
+                IP and check. Retry the same operation ID and immutable request;
+                do not replace its proof. Stop retries at the returned{" "}
+                <code>retry_until</code>. A known verification requirement never
+                becomes Allow through a continuation timeout.
+              </p>
+              <details>
+                <summary>Backend events and user relationships</summary>
+                <Code>{`// Browser: send opaque credentials to your authenticated application.
 const credentials = await browser.getContextCredentials();
 
 // Backend: resolve credentials before asserting an association.
@@ -131,11 +148,12 @@ await krine.associate({
   client_id: context.client_id,
   user_id: authenticatedUser.id,
 });`}</Code>
-              <p className="help">
-                Event and association IDs identify immutable content for the
-                24-hour supported retry window. Browser-selected identifiers
-                never establish authoritative relationships.
-              </p>
+                <p className="help">
+                  Event and association IDs identify immutable content for the
+                  24-hour supported retry window. Browser-selected identifiers
+                  never establish authoritative relationships.
+                </p>
+              </details>
             </details>
             <details>
               <summary>Availability behavior</summary>
@@ -153,38 +171,7 @@ await krine.associate({
           <Loading />
         ) : null}
       </section>
-      <section id="providers">
-        <h2>Providers</h2>
-        {providers.error && <ResourceError resource={providers} />}
-        {providers.data ? (
-          <ul className="provider-list">
-            {providers.data.items.map((provider) => (
-              <li key={provider.capability}>
-                <h3>
-                  {provider.capability === "ip_intelligence"
-                    ? "IP intelligence"
-                    : "Verification"}
-                </h3>
-                <p>
-                  {provider.provider} · {provider.status.replaceAll("_", " ")}
-                </p>
-                {provider.checked_at && (
-                  <p className="help">
-                    Last connection test <Time at={provider.checked_at} />
-                  </p>
-                )}
-                <p className="help">
-                  {provider.enabled
-                    ? "Configuration is active. Connection tests do not guarantee future availability."
-                    : "Not configured. Dependent evidence stays unknown; verification policies cannot be published until this capability is configured."}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : providers.loading ? (
-          <Loading />
-        ) : null}
-      </section>
+      <Providers />
     </>
   );
 }

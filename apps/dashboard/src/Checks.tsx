@@ -508,9 +508,7 @@ function CheckWorkspace({
                   ),
                 )}
               </ul>
-              <h3>
-                Policy to publish · draft revision {draft.server.draft_revision}
-              </h3>
+              <h3>Policy to publish</h3>
               <PolicyRead policy={draft.policy} />
               <div className="actions">
                 <button

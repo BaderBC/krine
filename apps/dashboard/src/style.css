@@ -845,3 +845,70 @@ dialog .login-form {
 .decisive-evidence > .trace {
   font-size: 15px;
 }
+.provider {
+  margin-top: 0;
+}
+.provider-summary {
+  margin-left: 15px;
+  font-weight: 400;
+}
+.provider-form {
+  max-width: 660px;
+}
+.provider-form > label {
+  margin: 18px 0 8px;
+  max-width: 480px;
+}
+.provider-form > .actions,
+.provider-test-result,
+.provider-disconnect {
+  margin-top: 20px;
+}
+.provider-test-result,
+.provider-review,
+.provider-recovery {
+  font-size: 13px;
+}
+.provider-review h3 {
+  margin-top: 18px;
+}
+.provider-dependents {
+  padding-left: 20px;
+}
+.provider-dependents > li {
+  margin: 18px 0;
+}
+.provider-dependents ul {
+  margin-top: 8px;
+  padding-left: 18px;
+}
+.provider-dependents li li {
+  margin: 8px 0;
+}
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-weight: 400;
+}
+.checkbox-label input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 2px 0 0;
+}
+.verification-history {
+  padding-left: 20px;
+  font-size: 13px;
+}
+.verification-history li {
+  padding: 6px 0;
+}
+.continuation-evidence {
+  margin: 10px 0;
+}
+.continuation-evidence > p {
+  margin-bottom: 3px;
+  font-size: 13px;
+}

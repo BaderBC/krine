@@ -360,7 +360,18 @@ function Trace({ trace }: { trace: ConditionTrace }) {
       <p>
         {trace.reference && (
           <>
-            <strong>{refLabel(trace.reference)}</strong> ·{" "}
+            <strong>
+              {trace.reference.source === "metric" ? (
+                <Link
+                  to={`/metrics/${encode(trace.reference.name)}?version=${trace.reference.version}`}
+                >
+                  {refLabel(trace.reference)}
+                </Link>
+              ) : (
+                refLabel(trace.reference)
+              )}
+            </strong>{" "}
+            ·{" "}
           </>
         )}
         {trace.observed
@@ -374,6 +385,156 @@ function Trace({ trace }: { trace: ConditionTrace }) {
         <Trace key={index} trace={child} />
       ))}
     </div>
+  );
+}
+
+function continuationReason(
+  trace: NonNullable<DecisionDetail["evaluation"]>["trace"][number],
+) {
+  if (trace.route === "verification_passed")
+    return "Verification passed; evaluation continued.";
+  if (trace.condition.result === "unknown")
+    return "Condition unknown; the policy explicitly continued.";
+  return "Condition false; evaluation continued.";
+}
+function capturedLeaves(trace: ConditionTrace): ConditionTrace[] {
+  return trace.reference
+    ? [trace]
+    : (trace.children ?? []).flatMap(capturedLeaves);
+}
+function OtherwiseEvidence({ record }: { record: DecisionDetail }) {
+  const traces = record.evaluation?.trace ?? [];
+  return (
+    <div className="decisive-evidence" aria-label="Otherwise captured evidence">
+      <p>
+        {traces.length ? "Every rule continued." : "This policy has no rules."}{" "}
+        Otherwise {actionLabel(record.policy!.otherwise)}.
+      </p>
+      {traces.slice(0, 3).map((trace) => {
+        const index = record.policy!.rules.findIndex(
+          (rule) => rule.id === trace.rule_id,
+        );
+        const condition =
+          index >= 0
+            ? conditionLabel(record.policy!.rules[index]!.condition)
+            : "";
+        const leaves = capturedLeaves(trace.condition);
+        return (
+          <div className="continuation-evidence" key={trace.rule_id}>
+            <p>
+              <strong>Rule {index + 1}</strong> · {continuationReason(trace)}
+            </p>
+            {condition.length <= 220 && <p className="help">{condition}</p>}
+            {leaves.slice(0, 4).map((leaf, at) => (
+              <Trace key={at} trace={leaf} />
+            ))}
+            {(leaves.length > 4 || condition.length > 220) && (
+              <p className="help">
+                Inspect the policy path below for the complete condition and its
+                captured values.
+              </p>
+            )}
+          </div>
+        );
+      })}
+      {traces.length > 3 && (
+        <p className="help">
+          {traces.length - 3} further rules continued. Inspect the full policy
+          path below.
+        </p>
+      )}
+    </div>
+  );
+}
+function VerificationHistory({ record }: { record: DecisionDetail }) {
+  const transitions = record.verification_transitions;
+  if (!transitions?.length) return null;
+  const steps = [
+    ...new Set(
+      transitions.map((transition) => transition.challenge_id).filter(Boolean),
+    ),
+  ];
+  const labels: Record<string, string> = {
+    pending: "Awaiting verification",
+    verifying: "Verifying evidence",
+    passed: "Verified; continued to the next rule",
+    failed: "Verification failed",
+    expired: "Verification expired",
+    unavailable: "Verification unavailable",
+  };
+  return (
+    <details id="verification-steps">
+      <summary>Verification steps</summary>
+      <p className="help">
+        These transitions belong to the same protected attempt. Passing a step
+        continues the policy; only a final Allow authorizes the action.
+      </p>
+      <ol className="verification-history">
+        {transitions.map((transition) => (
+          <li key={transition.sequence}>
+            <Time at={transition.at} /> ·{" "}
+            {transition.challenge_id &&
+              `Step ${steps.indexOf(transition.challenge_id) + 1} · `}
+            {labels[transition.state] ?? reasonLabel(transition.state)}
+            <p className="help">{reasonLabel(transition.detail)}</p>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function ProviderEvidence({ record }: { record: DecisionDetail }) {
+  if (
+    !record.provider_revisions ||
+    !Object.keys(record.provider_revisions).length
+  )
+    return null;
+  return (
+    <>
+      <h3>Provider contribution</h3>
+      {Object.entries(record.provider_revisions).map(([capability, pinned]) => {
+        const observation = record.provider_observations?.[capability];
+        return (
+          <div key={capability}>
+            <p>
+              {capability === "verification"
+                ? "Verification"
+                : "IP intelligence"}{" "}
+              ·{" "}
+              {pinned.enabled
+                ? `Configuration revision ${pinned.revision}`
+                : "Not configured for this attempt"}
+            </p>
+            {observation && (
+              <p className="help">
+                {reasonLabel(observation.status)} ·{" "}
+                {reasonLabel(observation.detail)} · Observed{" "}
+                <Time at={observation.observed_at} />.
+              </p>
+            )}
+            {capability === "verification" && pinned.enabled && (
+              <p className="help">
+                {record.verification_transitions?.length
+                  ? "Verification results are recorded in this attempt’s verification steps."
+                  : "This attempt did not reach a verification step."}
+              </p>
+            )}
+            {capability === "ip_intelligence" &&
+              pinned.enabled &&
+              !observation && (
+                <p className="help">No provider observation was recorded.</p>
+              )}
+            <Link
+              className="small"
+              to={`/settings?provider=${encode(capability)}#providers`}
+            >
+              Provider settings
+            </Link>
+          </div>
+        );
+      })}
+    </>
   );
 }
 function MetricValues({
@@ -461,6 +622,23 @@ export function DecisionPage() {
               <Trace trace={decisive.condition} />
             </div>
           )}
+          {record.reason === "otherwise" &&
+            record.policy &&
+            record.evaluation && <OtherwiseEvidence record={record} />}
+          {record.outcome === "CHALLENGE_REQUIRED" && (
+            <p className="explanation">
+              The action is awaiting verification. This is the last recorded
+              state; it is not a final authorization.
+            </p>
+          )}
+          {record.reason.startsWith("verification_") &&
+          record.verification_transitions?.length &&
+          record.outcome !== "CHALLENGE_REQUIRED" ? (
+            <p className="explanation">
+              {reasonLabel(record.verification_transitions.at(-1)!.detail)}. The
+              policy denied this attempt.
+            </p>
+          ) : null}
           {rule && (
             <p className="explanation">
               When {conditionLabel(rule.condition)}.<br />
@@ -469,6 +647,7 @@ export function DecisionPage() {
             </p>
           )}
           <Identifiers record={record} />
+          <VerificationHistory record={record} />
           {record.evaluation && record.policy && (
             <details id="policy-path">
               <summary>Policy path</summary>
@@ -502,6 +681,7 @@ export function DecisionPage() {
                 values do not replace this record.
               </p>
               <MetricValues metrics={record.snapshot.metrics} />
+              <ProviderEvidence record={record} />
               {Object.keys(record.snapshot.inputs).length > 0 && (
                 <JsonDetails
                   title="Trusted backend inputs"
@@ -608,6 +788,15 @@ export function EntityPage() {
     `/entities/${encode(kind)}/${encode(id)}${params.has("associations_cursor") ? `?associations_cursor=${encode(params.get("associations_cursor")!)}` : ""}`,
   );
   const entity = resource.data;
+  const metrics = entity
+    ? Object.fromEntries(
+        Object.entries(entity.metrics).filter(
+          ([name]) =>
+            name.startsWith(`${kind}.`) ||
+            (kind === "session" && name.startsWith("browser.")),
+        ),
+      )
+    : {};
   return (
     <>
       <ResourceError resource={resource} />
@@ -629,7 +818,14 @@ export function EntityPage() {
             IP is evidence, never proof of a person’s identity.
           </p>
           <h2>Current metrics</h2>
-          <MetricValues metrics={entity.metrics} />
+          {Object.keys(metrics).length ? (
+            <MetricValues metrics={metrics} />
+          ) : (
+            <p className="muted">
+              No built-in metrics apply directly to this entity. Inspect its
+              relationships for related context.
+            </p>
+          )}
           <h2>Relationships</h2>
           {entity.associations.length ? (
             <ul className="relationship-list">

@@ -1,4 +1,4 @@
-import { ApiError, errorMessage } from "./api";
+import { ApiError, definitiveMutationFailure, errorMessage } from "./api";
 import type { Api, Mutation } from "./api";
 import type { Check, Policy, Version } from "./types";
 import { policyError, sameJson } from "./policy";
@@ -149,6 +149,40 @@ function validIntent(value: unknown): value is Intent {
     intent.kind === "restore" &&
     integer(intent.version) &&
     document(intent.before)
+  );
+}
+
+function validAcknowledgement(
+  value: unknown,
+  intent: Intent,
+  name: string,
+): value is Check | Version {
+  if (!value || typeof value !== "object") return false;
+  if (intent.kind === "publish") {
+    const version = value as Version;
+    return (
+      integer(version.version) &&
+      version.version > (intent.expected_active_version ?? 0) &&
+      integer(version.published_at) &&
+      validRecoveryPolicy(version.policy) &&
+      !policyError(version.policy)
+    );
+  }
+  const check = value as Check;
+  return (
+    check.name === name &&
+    typeof check.description === "string" &&
+    integer(check.draft_revision) &&
+    check.draft_revision > intent.revision &&
+    (check.active_version === null ||
+      (integer(check.active_version) && check.active_version > 0)) &&
+    typeof check.has_draft_changes === "boolean" &&
+    integer(check.updated_at) &&
+    validRecoveryPolicy(check.draft) &&
+    !policyError(check.draft) &&
+    (intent.kind !== "save" ||
+      (sameJson(check.draft, intent.document.policy) &&
+        check.description === intent.document.description))
   );
 }
 
@@ -396,9 +430,14 @@ export class DraftController {
   }
   private async perform(intent: Intent): Promise<Check | Version | undefined> {
     try {
-      const result = await this.api.run<Check | Version>(this.request(intent));
+      const result = await this.api.run<unknown>(this.request(intent));
       if (!this.ownsRecovery()) return undefined;
-      this.intent = null;
+      if (!validAcknowledgement(result, intent, this.state.server.name))
+        throw new ApiError(
+          200,
+          "invalid_response",
+          "Krine returned an unreadable acknowledgement. Retry the original request to recover its result.",
+        );
       const prior = this.state.server;
       let server = prior;
       let policy = this.state.policy;
@@ -460,18 +499,14 @@ export class DraftController {
         action: null,
         notice,
       };
+      this.intent = null;
       this.emit();
       return result;
     } catch (error) {
       if (!this.ownsRecovery()) return undefined;
       const conflict =
         error instanceof ApiError && error.code === "revision_conflict";
-      if (
-        error instanceof ApiError &&
-        error.status >= 400 &&
-        error.status < 500
-      )
-        this.intent = null;
+      if (definitiveMutationFailure(error)) this.intent = null;
       const details =
         error instanceof ApiError
           ? error.details
