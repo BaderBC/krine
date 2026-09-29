@@ -334,10 +334,6 @@ pub async fn metric(Path((name, version)): Path<(String, u32)>) -> Result<Json<V
         krine_core::metric(&name, version).ok_or_else(ApiError::absent)?
     )))
 }
-pub async fn setup(State(app): State<App>) -> Result<Json<Value>> {
-    Ok(Json(crate::credentials::setup(&app).await?))
-}
-
 pub async fn version(
     State(app): State<App>,
     Path((name, version)): Path<(String, i64)>,

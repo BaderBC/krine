@@ -168,6 +168,7 @@ pub async fn context(
     )
     .await?;
     crate::events::outbox(&mut tx,&observation_id,"event",now,&json!({"event_id":observation_id,"name":"browser.context","client_id":client.client_id,"session_id":session.session_id,"ip":peer.0.to_string(),"properties":session.signals,"accepted_at":now,"provenance":"browser"})).await?;
+    crate::connection::observe(&mut tx, "client_evidence", "", &observation_id, now).await?;
     tx.commit().await?;
     save(&app, "client", &client_token, &client).await?;
     save(&app, "session", &session_token, &session).await?;

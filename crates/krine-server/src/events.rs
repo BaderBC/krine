@@ -164,6 +164,7 @@ pub async fn ingest(
         payload["accepted_at"] = json!(accepted);
         payload["provenance"] = json!("backend");
         outbox(&mut tx, &input.event_id, "event", accepted, &payload).await?;
+        crate::connection::observe(&mut tx, "backend_event", "", &input.event_id, accepted).await?;
         accepted
     };
     tx.commit().await?;

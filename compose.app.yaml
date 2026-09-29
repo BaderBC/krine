@@ -13,6 +13,7 @@ services:
       KRINE_BROWSER_RATE_PER_MINUTE: ${KRINE_BROWSER_RATE_PER_MINUTE:-300}
       KRINE_SERVER_RATE_PER_MINUTE: ${KRINE_SERVER_RATE_PER_MINUTE:-3000}
       KRINE_LOGIN_RATE_PER_MINUTE: ${KRINE_LOGIN_RATE_PER_MINUTE:-10}
+      KRINE_HISTORY_RETENTION_DAYS: ${KRINE_HISTORY_RETENTION_DAYS:-30}
       KRINE_MAX_PENDING_OUTBOX: ${KRINE_MAX_PENDING_OUTBOX:-1000000}
     secrets: [postgres_password, valkey_password, clickhouse_password, browser_public_key, server_secret, admin_password]
     depends_on:

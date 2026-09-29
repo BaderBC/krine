@@ -1,6 +1,6 @@
 use crate::{
     App,
-    admin::{self, List},
+    admin::List,
     error::{ApiError, Result},
     util,
 };
@@ -8,6 +8,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -56,7 +57,7 @@ pub(crate) async fn clickhouse(
     }
     String::from_utf8(bytes).map_err(|_| ApiError::unavailable())
 }
-fn table(app: &App, versioned: bool) -> String {
+pub(crate) fn table(app: &App, versioned: bool) -> String {
     let name = if versioned { "history_v2" } else { "history" };
     #[cfg(test)]
     if !app.provider_test.history_suffix.is_empty() {
@@ -65,7 +66,35 @@ fn table(app: &App, versioned: bool) -> String {
     let _ = app;
     name.into()
 }
-async fn initialize(app: &App) -> Result<bool> {
+pub(crate) use crate::retention::{configure as configure_retention, current as retention};
+pub(crate) async fn available_records(
+    app: &App,
+    ids: &[String],
+    cutoff: i64,
+) -> Result<Vec<String>> {
+    if ids.is_empty() || ids.len() > 3 {
+        return Err(ApiError::unavailable());
+    }
+    let keys = ["param_id0", "param_id1", "param_id2"];
+    let placeholders = ["{id0:String}", "{id1:String}", "{id2:String}"];
+    let mut params = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (keys[i], id.clone()))
+        .collect::<Vec<_>>();
+    params.push(("param_cutoff", cutoff.to_string()));
+    let response=clickhouse(app,&format!("SELECT id FROM {} FINAL WHERE kind IN ('event','decision') AND id IN ({}) AND at>={{cutoff:Int64}} LIMIT 3 FORMAT JSONEachRow",table(app,true),placeholders[..ids.len()].join(",")),params,None).await?;
+    response
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|row| row["id"].as_str().map(str::to_owned))
+                .ok_or_else(ApiError::unavailable)
+        })
+        .collect()
+}
+pub(crate) async fn initialize(app: &App) -> Result<bool> {
     let mut tx = app.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('history-v2-migration',0))")
         .execute(&mut *tx)
@@ -83,8 +112,8 @@ async fn initialize(app: &App) -> Result<bool> {
     }
     let legacy = table(app, false);
     let versioned = table(app, true);
-    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {legacy} (kind LowCardinality(String), id String, at Int64, payload String) ENGINE=ReplacingMergeTree ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY"),vec![],None).await?;
-    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {versioned} (kind LowCardinality(String), id String, at Int64, payload String, revision UInt64) ENGINE=ReplacingMergeTree(revision) ORDER BY (kind,id) TTL toDateTime(intDiv(at,1000)) + INTERVAL 30 DAY"),vec![],None).await?;
+    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {legacy} (kind LowCardinality(String), id String, at Int64, payload String) ENGINE=ReplacingMergeTree ORDER BY (kind,id)"),vec![],None).await?;
+    clickhouse(app,&format!("CREATE TABLE IF NOT EXISTS {versioned} (kind LowCardinality(String), id String, at Int64, payload String, revision UInt64) ENGINE=ReplacingMergeTree(revision) ORDER BY (kind,id)"),vec![],None).await?;
     let params = vec![
         ("param_kind", migration.get::<String, _>("cursor_kind")),
         ("param_id", migration.get::<String, _>("cursor_id")),
@@ -143,13 +172,15 @@ pub async fn export(app: &App) -> Result<()> {
         ids.push(id);
         revisions.push(row.get::<i64, _>("revision"));
     }
-    clickhouse(
-        app,
-        &format!("INSERT INTO {} FORMAT JSONEachRow", table(app, true)),
-        vec![],
-        Some(body),
-    )
-    .await?;
+    if !body.is_empty() {
+        clickhouse(
+            app,
+            &format!("INSERT INTO {} FORMAT JSONEachRow", table(app, true)),
+            vec![],
+            Some(body),
+        )
+        .await?;
+    }
     #[cfg(test)]
     if let Some(pause) = &app.provider_test.after_export {
         pause.arrived.notify_one();
@@ -209,6 +240,7 @@ pub struct Filters {
     operation_id: Option<String>,
     outcome: Option<String>,
     entity: Option<String>,
+    entity_kind: Option<String>,
     name: Option<String>,
     from: Option<i64>,
     to: Option<i64>,
@@ -227,6 +259,7 @@ const DECISION_SUMMARY_FIELDS: &[&str] = &[
     "user_id",
     "ip",
     "source",
+    "reason_summary",
 ];
 
 async fn list(
@@ -235,13 +268,32 @@ async fn list(
     f: Filters,
     entity_field: Option<&'static str>,
 ) -> Result<Json<Value>> {
-    let list = List {
-        limit: f.limit,
-        cursor: f.cursor,
-        q: None,
+    let entity_field = match f.entity_kind.as_deref() {
+        Some(kind) => {
+            if f.entity.as_ref().is_none_or(String::is_empty) {
+                return Err(ApiError::invalid(
+                    "entity_kind requires an entity identifier.",
+                ));
+            }
+            Some(match kind {
+                "client" => "client_id",
+                "session" => "session_id",
+                "user" => "user_id",
+                "ip" => "ip",
+                _ => return Err(ApiError::invalid("Invalid entity kind.")),
+            })
+        }
+        None => entity_field,
     };
-    let limit = list.limit()?;
-    let after = list.cursor()?;
+    let scope = util::digest(
+        serde_json::to_vec(&json!({"kind":kind,"check":f.check,"operation_id":f.operation_id,"outcome":f.outcome,"entity":f.entity,"entity_field":entity_field,"name":f.name,"from":f.from,"to":f.to})).map_err(|_| ApiError::unavailable())?,
+    );
+    let after = history_cursor(f.cursor.as_deref(), &scope, f.entity_kind.is_none())?;
+    let limit = List {
+        limit: f.limit,
+        ..Default::default()
+    }
+    .limit()?;
     for value in [&f.check, &f.operation_id, &f.outcome, &f.entity, &f.name]
         .into_iter()
         .flatten()
@@ -258,9 +310,13 @@ async fn list(
         // Large policy traces belong only in the detail response. Extract raw
         // scalar JSON so nullable IDs and numeric fields keep their wire types.
         for field in DECISION_SUMMARY_FIELDS {
-            query.push_str(&format!(
-                ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
-            ));
+            if *field == "reason_summary" {
+                query.push_str(",if(length(JSONExtractRaw(payload,'reason_summary')) BETWEEN 1 AND 8192,JSONExtractRaw(payload,'reason_summary'),'null') AS summary_reason_summary");
+            } else {
+                query.push_str(&format!(
+                    ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
+                ));
+            }
         }
     } else {
         query.push_str(",payload");
@@ -269,7 +325,10 @@ async fn list(
         " FROM {} FINAL WHERE kind={{kind:String}}",
         table(app, true)
     ));
+    let retention = retention(app).await?;
+    query.push_str(" AND at>={retention_cutoff:Int64}");
     let mut params = vec![
+        ("param_retention_cutoff", retention.cutoff.to_string()),
         ("param_kind", kind.to_owned()),
         ("param_limit", (limit + 1).to_string()),
     ];
@@ -319,10 +378,16 @@ async fn list(
     let next = if rows.len() > limit as usize {
         let row = &rows[limit as usize - 1];
         let at = parse_i64(&row["at"])?;
-        Some(admin::cursor(
-            at,
-            row["id"].as_str().ok_or_else(ApiError::unavailable)?,
-        ))
+        Some(
+            URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&(
+                    at,
+                    row["id"].as_str().ok_or_else(ApiError::unavailable)?,
+                    &scope,
+                ))
+                .map_err(|_| ApiError::unavailable())?,
+            ),
+        )
     } else {
         None
     };
@@ -339,7 +404,36 @@ async fn list(
             Ok(payload)
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(Json(json!({"items":items,"next_cursor":next})))
+    Ok(Json(
+        json!({"items":items,"next_cursor":next,"retention":retention.description()}),
+    ))
+}
+fn history_cursor(value: Option<&str>, scope: &str, legacy: bool) -> Result<Option<(i64, String)>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.len() > 1024 {
+        return Err(ApiError::invalid("Invalid cursor."));
+    }
+    let decoded = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| ApiError::invalid("Invalid cursor."))?;
+    if let Ok((at, id, bound)) = serde_json::from_slice::<(i64, String, String)>(&decoded) {
+        if bound != scope || at < 0 || id.len() > 256 {
+            return Err(ApiError::invalid(
+                "The cursor does not match these Activity filters.",
+            ));
+        }
+        return Ok(Some((at, id)));
+    }
+    if legacy {
+        return List {
+            cursor: Some(value.to_owned()),
+            ..Default::default()
+        }
+        .cursor();
+    }
+    Err(ApiError::invalid("Invalid scoped Activity cursor."))
 }
 fn parse_i64(value: &Value) -> Result<i64> {
     value
@@ -373,14 +467,15 @@ pub async fn decisions(
     list(&app, "decision", f, None).await
 }
 async fn get(app: &App, kind: &str, id: &str) -> Result<Json<Value>> {
-    let pending: Option<Value> = sqlx::query_scalar("SELECT payload FROM delivery_outbox WHERE COALESCE(logical_id,id)=$1 ORDER BY revision DESC LIMIT 1")
-        .bind(format!("{kind}:{id}"))
+    let retention = retention(app).await?;
+    let pending: Option<Value> = sqlx::query_scalar("SELECT payload FROM delivery_outbox WHERE COALESCE(logical_id,id)=$1 AND at>=$2 ORDER BY revision DESC LIMIT 1")
+        .bind(format!("{kind}:{id}")).bind(retention.cutoff)
         .fetch_optional(&app.db)
         .await?;
     if let Some(value) = pending {
         return Ok(Json(value));
     }
-    let response=clickhouse(app,&format!("SELECT payload FROM {} FINAL WHERE kind={{kind:String}} AND id={{id:String}} LIMIT 1 FORMAT JSONEachRow",table(app,true)),vec![("param_kind",kind.into()),("param_id",format!("{kind}:{id}"))],None).await?;
+    let response=clickhouse(app,&format!("SELECT payload FROM {} FINAL WHERE kind={{kind:String}} AND id={{id:String}} AND at>={{cutoff:Int64}} LIMIT 1 FORMAT JSONEachRow",table(app,true)),vec![("param_kind",kind.into()),("param_id",format!("{kind}:{id}")),("param_cutoff",retention.cutoff.to_string())],None).await?;
     let row: Value = serde_json::from_str(response.trim()).map_err(|_| ApiError::absent())?;
     Ok(Json(
         serde_json::from_str(row["payload"].as_str().ok_or_else(ApiError::unavailable)?)

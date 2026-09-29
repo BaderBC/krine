@@ -690,9 +690,9 @@ async fn migration_preserves_unknown_provenance_and_legacy_digest_while_fencing_
         "INSERT INTO associations(id,digest,client_id,user_id,metadata,created_at) VALUES('old','x','legacy_client','legacy_user','{}',1)",
     ] {
         let error = sqlx::query(statement).execute(&mut *old).await.unwrap_err();
-        assert!(error.to_string().contains("generation 4"));
+        assert!(error.to_string().contains("generation 5"));
     }
-    sqlx::query("SET krine.writer_generation='4'")
+    sqlx::query("SET krine.writer_generation='5'")
         .execute(&mut *old)
         .await
         .unwrap();
