@@ -114,6 +114,9 @@ async fn serve(State(assets): State<Arc<HashMap<String, Asset>>>, request: Reque
         let dashboard_route = matches!(
             path.split('/').nth(1),
             Some("" | "checks" | "activity" | "entities" | "metrics" | "settings")
+        ) || matches!(
+            path,
+            "/inspect/check" | "/inspect/event" | "/inspect/entity"
         );
         (accepts_html && dashboard_route)
             .then(|| assets.get("/index.html"))
@@ -178,6 +181,11 @@ mod tests {
             "/v1/missing",
             "/health/missing",
             "/assets/missing.js",
+            "/inspect",
+            "/inspect/unknown?id=..",
+            "/inspect/check/extra?name=can_register",
+            "/inspect/event/?id=..",
+            "/inspect/entity.js?kind=user&id=alice",
             "/.env",
             "/%2e%2e/secret",
             "/favicon.ico",
@@ -240,6 +248,70 @@ mod tests {
             serve(State(assets), request).await.status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
+    }
+
+    #[tokio::test]
+    async fn canonical_inspection_navigation_serves_the_shell_without_interpreting_selectors() {
+        let assets = Arc::new(HashMap::from([(
+            "/index.html".into(),
+            Asset {
+                bytes: Bytes::from_static(b"dashboard"),
+                content_type: "text/html; charset=utf-8",
+            },
+        )]));
+        for path in [
+            "/inspect/check?name=can_register",
+            "/inspect/check?name=.",
+            "/inspect/check?name=..&view=draft",
+            "/inspect/event?id=..",
+            "/inspect/event?id=%252e&return_to=%2Factivity%3Fkind%3Devents",
+            "/inspect/entity?kind=user&id=%E9%9B%AA%2F%3F%23%26%25%20",
+            "/inspect/entity?kind=ip&id=2001%3Adb8%3A%3A1",
+        ] {
+            for method in [Method::GET, Method::HEAD] {
+                let request = Request::builder()
+                    .uri(path)
+                    .method(method.clone())
+                    .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                    .body(Body::empty())
+                    .unwrap();
+                let response = serve(State(assets.clone()), request).await;
+                assert_eq!(response.status(), StatusCode::OK, "{method} {path}");
+                assert_eq!(response.headers()[header::CONTENT_LENGTH], "9");
+                assert_eq!(
+                    response.headers()[header::CONTENT_TYPE],
+                    "text/html; charset=utf-8"
+                );
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+                assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+                let body = axum::body::to_bytes(response.into_body(), 100)
+                    .await
+                    .unwrap();
+                if method == Method::HEAD {
+                    assert!(body.is_empty());
+                } else {
+                    assert_eq!(body.as_ref(), b"dashboard");
+                }
+            }
+            let request = Request::builder()
+                .uri(path)
+                .header(header::ACCEPT, "application/json")
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(
+                serve(State(assets.clone()), request).await.status(),
+                StatusCode::NOT_FOUND
+            );
+            let request = Request::builder()
+                .uri(path)
+                .method(Method::POST)
+                .header(header::ACCEPT, "text/html")
+                .body(Body::empty())
+                .unwrap();
+            let response = serve(State(assets.clone()), request).await;
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+            assert_eq!(response.headers()[header::ALLOW], "GET, HEAD");
+        }
     }
 
     #[test]

@@ -35,12 +35,33 @@ assert status == 200 and headers["Content-Type"].startswith("text/html")
 assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
 for path in ("/metrics/client.age_seconds", "/entities/ip/127.0.0.1", "/entities/user/alice%40example.com"):
     assert request(path, accept="text/html")[0] == 200, path
+for path in (
+    "/inspect/check?name=can_register",
+    "/inspect/check?name=..&view=draft",
+    "/inspect/event?id=..",
+    "/inspect/event?id=%252e&return_to=%2Factivity%3Fkind%3Devents",
+    "/inspect/entity?kind=user&id=%E9%9B%AA%2F%3F%23%26%25%20",
+    "/inspect/entity?kind=ip&id=2001%3Adb8%3A%3A1",
+):
+    for method in ("GET", "HEAD"):
+        status, headers, body = request(path, accept="text/html", method=method)
+        assert status == 200 and headers["Content-Type"].startswith("text/html"), (method, path)
+        assert int(headers["Content-Length"]) == len(html), (method, path)
+        assert body == (html if method == "GET" else b""), (method, path)
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"], (method, path)
+    assert request(path, accept="application/json")[0] == 404, path
+    status, headers, _ = request(path, accept="text/html", method="POST")
+    assert status == 405 and headers["Allow"] == "GET, HEAD", path
 asset = re.search(rb'src="(/assets/[^" ]+\.js)"', html)
 assert asset, "Dashboard entry script is missing"
 assert request(asset[1].decode())[1]["Content-Type"].startswith("text/javascript")
-for path in ("/assets/missing.js", "/.env", "/v1/missing", "/health/missing"):
+for path in (
+    "/assets/missing.js", "/.env", "/v1/missing", "/health/missing",
+    "/inspect", "/inspect/unknown?id=..", "/inspect/check/extra?name=can_register",
+    "/inspect/event/?id=..", "/inspect/entity.js?kind=user&id=alice",
+):
     status, headers, body = request(path, accept="text/html")
-    assert status >= 400 and b'<!doctype' not in body.lower(), path
+    assert status == 404 and b'<!doctype' not in body.lower(), path
 assert request("/checks", method="POST")[0] == 405
 assert request("/v1/admin/checks")[0] == 401
 secrets = Path(os.environ.get("KRINE_SECRETS_DIR", "deploy/secrets"))
