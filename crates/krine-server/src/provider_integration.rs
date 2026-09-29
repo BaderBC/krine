@@ -1548,3 +1548,6 @@ mod connection_tests;
 
 #[path = "retention_integration.rs"]
 mod retention_tests;
+
+#[path = "addressing_integration.rs"]
+mod addressing;

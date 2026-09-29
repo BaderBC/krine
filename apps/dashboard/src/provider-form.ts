@@ -1,10 +1,5 @@
-import {
-  api,
-  ApiError,
-  definitiveMutationFailure,
-  encode,
-  mutation,
-} from "./api";
+import { checkPath } from "./addresses";
+import { api, ApiError, definitiveMutationFailure, mutation } from "./api";
 import type { Mutation } from "./api";
 import type { Provider, Version } from "./types";
 
@@ -225,8 +220,8 @@ export class ProviderForm {
     const test = this.state.test;
     return Boolean(
       test?.test_token &&
-      ["ready", "configuration_checked"].includes(test.status) &&
-      test.checked_at + 600_000 > Date.now(),
+        ["ready", "configuration_checked"].includes(test.status) &&
+        test.checked_at + 600_000 > Date.now(),
     );
   }
   async test() {
@@ -317,7 +312,7 @@ export class ProviderForm {
             .slice(offset, offset + 4)
             .map(async (check) => {
               const version = await api.get<Version>(
-                `/checks/${encode(check.check)}/versions/${check.version}`,
+                checkPath(check.check, `/versions/${check.version}`),
               );
               if (version.version !== check.version)
                 throw new Error("Unexpected policy version");

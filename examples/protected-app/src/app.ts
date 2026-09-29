@@ -112,7 +112,7 @@ export function createApp(config: Config) {
     const now = Date.now();
     const attempt: Attempt = { id: randomUUID(), user_id: session.user_id, intent_id: request.intent_id, input_hash: digest,
       request: { operation_id: randomUUID(), check: CHECK, proof: request.proof, ip, user_id: session.user_id, inputs: {} },
-      created_at: now, state: 'preparing', context: null, associated: false,
+      created_at: now, state: 'preparing', context: null, associated: false, association_version: 2, association_request: null,
       event_sent: false, pending: null, evaluation: null, verification: null, result: null, error: null, recovery: false };
     store.insert(attempt);
     return resume(attempt);
@@ -155,8 +155,14 @@ export function createApp(config: Config) {
           store.save(a);
         }
         if (!a.associated) {
-          await krine.associate({ association_id: a.id, client_id: a.context.client_id, user_id: a.user_id,
-            metadata: { application: 'draftroom' } });
+          if (!a.association_request) {
+            a.association_request = { association_id: a.id, client_id: a.context.client_id, user_id: a.user_id,
+              ...(a.association_version === 2 ? { session_id: a.context.session_id } : {}),
+              metadata: { application: 'draftroom' } };
+            // Persist the chosen envelope before sending; a lost acknowledgement must replay it exactly.
+            store.save(a);
+          }
+          await krine.associate(a.association_request);
           a.associated = true; store.save(a);
         }
         if (!a.event_sent) {

@@ -15,7 +15,7 @@ use sqlx::{Postgres, QueryBuilder, Row};
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntityQuery {
-    associations_cursor: Option<String>,
+    pub(crate) associations_cursor: Option<String>,
 }
 pub async fn detail(
     State(app): State<App>,

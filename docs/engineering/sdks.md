@@ -163,10 +163,13 @@ await krine.event({
 await krine.associate({
   association_id: savedAssociation.id,
   client_id: context.client_id,
+  session_id: context.session_id,
   user_id: authenticatedUser.id,
   metadata: { source: 'authenticated_login' },
 });
 ```
+
+Persist the chosen association request before its first send. Include the resolved session for new assertions; recovery must reuse an older assertion’s exact original envelope, including an omitted session. Adding a session during recovery changes its immutable content.
 
 `resolveContext` calls the server-authenticated `/v1/contexts/resolve` endpoint. Krine validates the existing client/session credential pair and returns its IDs and expiry. It rejects missing, mismatched or expired context instead of creating a replacement. Resolve before persisting the event/association requests; on retry, submit those saved requests without replacing their original IDs or context. Do not accept `client_id`, `session_id` or `user_id` from the browser as authoritative relationship inputs.
 

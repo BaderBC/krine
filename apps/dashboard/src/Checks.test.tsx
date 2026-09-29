@@ -42,9 +42,9 @@ beforeEach(() => {
     async <T,>(path: string): Promise<T> => {
       if (path.startsWith("/metrics"))
         return { items: [metric], next_cursor: null } as T;
-      if (/\/versions\/\d+$/.test(path))
+      if (/\/versions\/\d+(?:\?|$)/.test(path))
         return {
-          version: Number(path.split("/").at(-1)),
+          version: Number(path.split("?")[0]!.split("/").at(-1)),
           published_at: 1,
           policy,
         } as T;
@@ -68,6 +68,7 @@ function mount(path = "/checks/can_claim_trial?view=draft") {
   const router = createMemoryRouter(
     [
       { path: "/checks/:name", element: <CheckPage /> },
+      { path: "/inspect/check", element: <CheckPage /> },
       { path: "/activity", element: <h1>Activity</h1> },
     ],
     { initialEntries: [path] },
@@ -244,4 +245,45 @@ describe("check workflows", () => {
         .getAttribute("href"),
     ).toBe(origin);
   });
+});
+
+it.each([".", ".."])(
+  "keeps the canonical check selector and unrelated query context while changing views for %s",
+  async (name) => {
+    current.name = name;
+    const user = userEvent.setup();
+    const scope =
+      "/activity?entity=user&entity_kind=user&from=100&to=200&cursor=older";
+    const router = mount(
+      `/inspect/check?name=${name}&version=1&extra=retained&return_to=${encodeURIComponent(scope)}`,
+    );
+    await user.click(
+      await screen.findByRole("link", { name: "Edit current policy" }),
+    );
+    expect(router.state.location.pathname).toBe("/inspect/check");
+    let selected = new URLSearchParams(router.state.location.search);
+    expect(selected.get("name")).toBe(name);
+    expect(selected.get("view")).toBe("draft");
+    expect(selected.has("version")).toBe(false);
+    expect(selected.get("return_to")).toBe(scope);
+    expect(selected.get("extra")).toBe("retained");
+    await user.click(screen.getByRole("link", { name: "Version 1" }));
+    selected = new URLSearchParams(router.state.location.search);
+    expect(selected.get("name")).toBe(name);
+    expect(selected.get("version")).toBe("1");
+    expect(selected.has("view")).toBe(false);
+    expect(selected.get("return_to")).toBe(scope);
+    expect(api.get).toHaveBeenCalledWith(
+      `/lookup/checks/versions/1?name=${name}`,
+    );
+  },
+);
+it("rejects repeated canonical check selectors without reading either target", async () => {
+  mount("/inspect/check?name=.&name=..");
+  await screen.findByText("Provide one check name in the address.");
+  expect(
+    vi
+      .mocked(api.get)
+      .mock.calls.every(([path]) => path.startsWith("/metrics")),
+  ).toBe(true);
 });

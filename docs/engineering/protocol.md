@@ -179,6 +179,32 @@ type ReasonSummary = {
 
 The sample includes the decisive rule, or up to three evaluated continuation rules explaining Otherwise. It includes at most four leaves in total, with zero-based paths into the captured condition tree. `position` is one-based. A compound rule's result cannot be inferred from one sampled leaf; inspect detail for complete logic. Unknown carries its original cause and metric version. Strings preview at most 64 UTF-8 bytes; `in` tests preview at most three values. The serialized summary is at most 8 KiB, with explicit truncation flags for omitted evidence and shortened values. Legacy records without a summary return null; they are never reconstructed using current evidence.
 
+### Query-addressed identifiers
+
+Use these additive admin routes when building new clients. Values belong in
+URL-encoded query parameters so valid `.` and `..` identifiers survive browser
+path normalization. Existing path routes and response contracts remain supported.
+See [ADR 0015](../decisions/0015-query-addressed-identifiers.md).
+
+| Resource | Query-addressed route (admin prefix omitted) |
+| --- | --- |
+| Check detail | `GET /lookup/checks?name={name}` |
+| Draft save | `PUT /lookup/checks/draft?name={name}` |
+| Publication / restoration | `POST /lookup/checks/publications?name={name}`, `POST /lookup/checks/restorations?name={name}` |
+| Check versions / version | `GET /lookup/checks/versions?name={name}`, `GET /lookup/checks/versions/{version}?name={name}` |
+| Event | `GET /lookup/events?id={id}` |
+| Entity / direct relationships | `GET /lookup/entities?kind={kind}&id={id}`, `GET /lookup/entities/relationships?kind={kind}&id={id}` |
+| Relationship / audit | `GET /lookup/relationships?kind={kind}&id={id}` |
+| Relationship correction / restoration | `POST /lookup/relationships/corrections?kind={kind}&id={id}`, `POST /lookup/relationships/restorations?kind={kind}&id={id}` |
+
+List and detail routes accept the same pagination parameters as their path
+counterparts. Selectors must occur exactly once; duplicate or unknown parameters
+are invalid. Values are decoded once and retain the same domain validation:
+encoded-looking user IDs such as literal `%2e` remain distinct from `.`.
+Mutations use the existing logical target and action for idempotency, so replay
+across aliases returns the same receipt; the same key for another target conflicts.
+Persisted interrupted requests retain their exact original path, body and key.
+
 ## Retention and recovery
 
 `KRINE_HISTORY_RETENTION_DAYS` controls analytical events/decisions (default 30, integer 2–3650). Every replica reads the shared durable setting; all deployment configurations must agree. A shorter window applies to reads immediately; physical deletion follows asynchronously on a four-hour cadence. An extension waits for legacy rolling TTL retirement, reported as `applying: true` with the previous effective `days` and new `requested_days`. After retirement, changes become effective at configuration commit. PostgreSQL is the single retention clock and persists the expiry boundary. Later increases cannot recover already expired records, including delayed exports. This does not change metric windows or security retention; see [ADR 0014](../decisions/0014-observed-connection-and-history.md). Uncorrected IP segments expire 30 days since last observation; backend assertions and corrected/restored IP segments with their audit remain durable. Reliability envelopes and final responses survive at least the 24-hour supported retry window. Proof/challenge tombstones last at least 24 hours beyond last valid use. Unexported delivery records are never age-deleted. Each unfinished attempt reserves one delivery slot, including while its current snapshot is already exported; subsequent states coalesce into the same slot with their complete immutable transition history. Capacity exhaustion rejects new events, browser observations and attempts before acknowledging them; already accepted attempts can finish within their reserved slots. Export acknowledgements apply only to the exact revision sent. Operator retention changes cannot erase active retry or challenge state. See ADR 0009 for event projection and restart behavior.

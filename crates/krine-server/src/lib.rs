@@ -1,3 +1,4 @@
+mod addressing;
 mod admin;
 mod auth;
 mod browser;
@@ -113,6 +114,7 @@ impl App {
 }
 pub fn router(app: App) -> Router {
     Router::new()
+        .merge(addressing::routes())
         .route("/health/live", get(|| async { "ok" }))
         .route("/health/ready", get(ready))
         .route("/v1/browser/context", post(browser::context))

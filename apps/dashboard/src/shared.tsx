@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { InvestigationLink as Link } from "./navigation";
-import { api, ApiError, encode, readErrorMessage } from "./api";
+import { entityUrl } from "./addresses";
+import { api, ApiError, readErrorMessage } from "./api";
 import type { Page } from "./types";
 
 export function useResource<T>(
@@ -180,11 +181,7 @@ export function EntityLink({
   id: string | null | undefined;
 }) {
   return id ? (
-    <Link
-      translate="no"
-      className="identifier"
-      to={`/entities/${encode(kind)}/${encode(id)}`}
-    >
+    <Link translate="no" className="identifier" to={entityUrl(kind, id)}>
       {id}
     </Link>
   ) : (

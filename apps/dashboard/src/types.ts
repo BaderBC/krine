@@ -113,6 +113,13 @@ export interface DecisionDetail extends Decision {
     trace: RuleTrace[];
   };
   relationship_ids?: string[];
+  relationship_context?: {
+    items: RelationshipSummary[];
+    total: number;
+    truncated: boolean;
+    observed_at: number;
+    observed_ip: RelationshipSummary | null;
+  };
   provider_revisions?: Record<string, { revision: number; enabled: boolean }>;
   provider_observations?: Record<
     string,
@@ -199,4 +206,43 @@ export interface CredentialCreation {
   credential: Credential;
   secret: string | null;
   secret_status: "revealed" | "unrecoverable" | "not_applicable";
+}
+
+export interface RelationshipSummary {
+  id: string;
+  kind: "backend" | "observed_ip";
+  client_id: string;
+  session_id: string | null;
+  user_id: string | null;
+  ip: string | null;
+  first_seen: number;
+  last_seen: number;
+  source: "backend" | "browser_observation";
+  credential_id: string | null;
+  last_credential_id: string | null;
+  first_source: "backend" | "browser.context" | "browser.proof" | "legacy";
+  last_source: "backend" | "browser.context" | "browser.proof" | "legacy";
+  first_event_id: string | null;
+  last_event_id: string | null;
+  revision: number;
+  revoked_at: number | null;
+  revocation_reason: string | null;
+  revoked_by: string | null;
+}
+export interface Relationship extends RelationshipSummary {
+  metadata: Record<string, unknown>;
+}
+export interface RelationshipAudit {
+  id: string;
+  at: number;
+  action: string;
+  reason: string;
+  actor: string | null;
+  revision: number | null;
+  relationship: Relationship | null;
+}
+export interface RelationshipDetail {
+  relationship: Relationship;
+  audit: Page<RelationshipAudit>;
+  recalculation: "complete";
 }

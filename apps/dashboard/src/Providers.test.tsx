@@ -89,7 +89,8 @@ beforeEach(() => {
             server_package: "@krine/server",
           },
         } as T;
-      if (path === "/checks/can_claim/versions/3") return version as T;
+      if (path === "/lookup/checks/versions/3?name=can_claim")
+        return version as T;
       throw new Error(`Unexpected ${path}`);
     },
   );
@@ -133,6 +134,7 @@ function mount(
     [
       { path: "/settings", element: <Settings /> },
       { path: "/checks/:name", element: <h1>Policy draft</h1> },
+      { path: "/inspect/check", element: <h1>Policy draft</h1> },
     ],
     { initialEntries: [path] },
   );
@@ -156,7 +158,7 @@ describe("provider configuration interface", () => {
       screen
         .getByRole("link", { name: "Return to policy draft · can_claim" })
         .getAttribute("href"),
-    ).toBe("/checks/can_claim?view=draft");
+    ).toBe("/inspect/check?name=can_claim&view=draft");
     expect(sessionStorage.getItem("krine:draft:can_claim")).toBe(
       "existing recovery",
     );
@@ -183,7 +185,7 @@ describe("provider configuration interface", () => {
       within(review)
         .getByRole("link", { name: "can_claim · v3" })
         .getAttribute("href"),
-    ).toBe("/checks/can_claim?version=3");
+    ).toBe("/inspect/check?name=can_claim&version=3");
     expect(review.textContent).toContain(
       "If the condition is unknown: Require verification",
     );
@@ -281,7 +283,7 @@ describe("provider configuration interface", () => {
     await screen.findByText("Leave with unsaved provider changes?");
     await user.click(screen.getByRole("button", { name: "Discard and leave" }));
     await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/checks/can_claim"),
+      expect(router.state.location.pathname).toBe("/inspect/check"),
     );
     expect(document.body.textContent).not.toContain("private_candidate");
   });

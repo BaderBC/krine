@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useAddressedParam } from "./addresses";
 import { InvestigationLink as Link } from "./navigation";
 import { encode } from "./api";
 import {
@@ -491,7 +491,7 @@ export function PolicyEditor({
   metrics: Metric[];
   onChange: (policy: Policy) => void;
 }) {
-  const { name } = useParams();
+  const name = useAddressedParam("name");
   const [expanded, setExpanded] = useState<string | null>(
     policy.rules[0]?.id ?? null,
   );

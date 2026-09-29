@@ -26,7 +26,7 @@ beforeEach(() => {
       } as any;
     if (path.includes("/versions/"))
       return {
-        version: Number(path.split("/").at(-1)),
+        version: Number(path.split("?")[0]!.split("/").at(-1)),
         published_at: 1,
         policy,
       } as any;
@@ -41,7 +41,7 @@ it("does not erase edits made after leaving an in-flight publication review", as
   const user = userEvent.setup();
   let finish: any;
   vi.spyOn(api, "run").mockImplementation(async (op) => {
-    if (op.path.endsWith("/publications"))
+    if (op.path.split("?")[0]!.endsWith("/publications"))
       return (await new Promise((resolve) => {
         finish = resolve;
       })) as any;
@@ -90,7 +90,7 @@ it("does not erase edits made after leaving an in-flight restoration", async () 
   const user = userEvent.setup();
   let finish: any;
   vi.spyOn(api, "run").mockImplementation(async (op) => {
-    if (op.path.endsWith("/restorations"))
+    if (op.path.split("?")[0]!.endsWith("/restorations"))
       return (await new Promise((resolve) => {
         finish = resolve;
       })) as any;
@@ -130,7 +130,7 @@ it.each(["publications", "restorations"])(
     const user = userEvent.setup();
     let finish: any;
     vi.spyOn(api, "run").mockImplementation(async (op) => {
-      if (op.path.endsWith("/" + kind))
+      if (op.path.split("?")[0]!.endsWith("/" + kind))
         return (await new Promise((resolve) => {
           finish = resolve;
         })) as any;
@@ -146,6 +146,7 @@ it.each(["publications", "restorations"])(
     const router = createMemoryRouter(
       [
         { path: "/checks/:name", element: <CheckPage /> },
+        { path: "/inspect/check", element: <CheckPage /> },
         { path: "/activity", element: <p>Activity test route</p> },
       ],
       {

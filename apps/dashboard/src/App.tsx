@@ -30,9 +30,16 @@ export function App() {
     if (reauthenticate) dialog.current?.showModal();
     else if (dialog.current?.open) dialog.current.close();
   }, [reauthenticate]);
+  const section =
+    location.pathname === "/inspect/check"
+      ? "checks"
+      : location.pathname.startsWith("/inspect/") ||
+          location.pathname.startsWith("/entities/")
+        ? "activity"
+        : location.pathname.split("/")[1] || "checks";
   useEffect(() => {
-    document.title = `${location.pathname.split("/")[1]?.replace(/^./, (value) => value.toUpperCase()) || "Checks"} · Krine`;
-  }, [location.pathname]);
+    document.title = `${section.replace(/^./, (value) => value.toUpperCase())} · Krine`;
+  }, [section]);
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -98,9 +105,27 @@ export function App() {
         {authenticated && (
           <>
             <nav aria-label="Main navigation">
-              <NavLink to="/checks">Checks</NavLink>
-              <NavLink to="/activity">Activity</NavLink>
-              <NavLink to="/metrics">Metrics</NavLink>
+              <Link
+                to="/checks"
+                aria-current={section === "checks" ? "page" : undefined}
+                className={section === "checks" ? "active" : undefined}
+              >
+                Checks
+              </Link>
+              <Link
+                to="/activity"
+                aria-current={section === "activity" ? "page" : undefined}
+                className={section === "activity" ? "active" : undefined}
+              >
+                Activity
+              </Link>
+              <Link
+                to="/metrics"
+                aria-current={section === "metrics" ? "page" : undefined}
+                className={section === "metrics" ? "active" : undefined}
+              >
+                Metrics
+              </Link>
             </nav>
             <div className="header-utilities">
               <NavLink to="/settings">Settings</NavLink>

@@ -5,11 +5,16 @@ import {
   useBlocker,
   useNavigate,
   useLocation,
-  useParams,
   useSearchParams,
 } from "react-router-dom";
 import { ApiError, api, encode, errorMessage, mutation } from "./api";
 import type { Mutation } from "./api";
+import {
+  checkPath,
+  checkUrl,
+  useAddressedParam,
+  changeSearch,
+} from "./addresses";
 import { DraftController } from "./draft";
 import {
   InvestigationLink as Link,
@@ -63,7 +68,7 @@ export function Checks() {
     try {
       const check = await api.run<Check>(pending.current);
       pending.current = null;
-      navigate(`/checks/${encode(check.name)}?view=draft`);
+      navigate(`${checkUrl(check.name)}&view=draft`);
     } catch (cause) {
       if (
         cause instanceof ApiError &&
@@ -142,7 +147,7 @@ export function Checks() {
                         <Link
                           className="record-name"
                           translate="no"
-                          to={`/checks/${encode(check.name)}`}
+                          to={checkUrl(check.name)}
                         >
                           {check.name}
                         </Link>
@@ -187,13 +192,14 @@ export function Checks() {
 }
 
 export function CheckPage() {
-  const { name = "" } = useParams();
-  const resource = useResource<Check>(`/checks/${encode(name)}`);
+  const name = useAddressedParam("name");
+  const resource = useResource<Check>(name ? checkPath(name) : null);
   const catalog = useResource<Page<Metric>>("/metrics?limit=100");
   return (
     <>
       <ResourceError resource={resource} />
       <ResourceError resource={catalog} />
+      {!name && <Notice>Provide one check name in the address.</Notice>}
       {resource.data && catalog.data ? (
         <CheckWorkspace
           key={name}
@@ -227,12 +233,12 @@ function CheckWorkspace({
   });
   const draft = useSyncExternalStore(model.subscribe, model.snapshot);
   const versions = useResource<Page<Version>>(
-    `/checks/${encode(initial.name)}/versions?limit=100${params.has("versions_cursor") ? `&cursor=${encode(params.get("versions_cursor")!)}` : ""}`,
+    `${checkPath(initial.name, "/versions")}&limit=100${params.has("versions_cursor") ? `&cursor=${encode(params.get("versions_cursor")!)}` : ""}`,
   );
   const active = useResource<Version>(
     draft.server.active_version === null
       ? null
-      : `/checks/${encode(initial.name)}/versions/${draft.server.active_version}`,
+      : checkPath(initial.name, `/versions/${draft.server.active_version}`),
   );
   const activePolicy = active.data;
   const [review, setReview] = useState(false);
@@ -264,7 +270,7 @@ function CheckWorkspace({
     : draft.server.active_version;
   const selectedResource = useResource<Version>(
     historical && selectedVersion !== null
-      ? `/checks/${encode(initial.name)}/versions/${selectedVersion}`
+      ? checkPath(initial.name, `/versions/${selectedVersion}`)
       : null,
   );
   const selected = historical ? selectedResource.data : activePolicy;
@@ -319,7 +325,7 @@ function CheckWorkspace({
     if (!result || !mounted.current || currentLocation.current !== originKey)
       return;
     setReview(false);
-    setParams(origin ? { return_to: origin } : {});
+    setParams(changeSearch(params, { view: null, version: null }));
     void versions.refresh();
   }
   async function fetchLatest() {
@@ -327,7 +333,7 @@ function CheckWorkspace({
     setFetching(true);
     setError(null);
     try {
-      const latest = await api.get<Check>(`/checks/${encode(initial.name)}`);
+      const latest = await api.get<Check>(checkPath(initial.name));
       if (mounted.current && currentLocation.current === origin)
         setLatest(latest);
     } catch (cause) {
@@ -345,9 +351,7 @@ function CheckWorkspace({
     if (!result || !mounted.current || currentLocation.current !== originKey)
       return;
     setRestore(null);
-    setParams(
-      origin ? { view: "draft", return_to: origin } : { view: "draft" },
-    );
+    setParams(changeSearch(params, { view: "draft", version: null }));
   }
 
   return (
@@ -378,7 +382,10 @@ function CheckWorkspace({
             Review and publish
           </button>
         ) : (
-          <Link className="button primary" to={`?view=draft`}>
+          <Link
+            className="button primary"
+            to={`?${changeSearch(params, { view: "draft", version: null })}`}
+          >
             Edit {historical ? "current " : ""}policy
           </Link>
         )}
@@ -644,7 +651,7 @@ function CheckWorkspace({
               {versions.data.items.map((version) => (
                 <li key={version.version}>
                   <Link
-                    to={`?version=${version.version}${params.has("versions_cursor") ? `&versions_cursor=${encode(params.get("versions_cursor")!)}` : ""}`}
+                    to={`?${changeSearch(params, { version: String(version.version), view: null })}`}
                   >
                     Version {version.version}
                     {version.version === draft.server.active_version
