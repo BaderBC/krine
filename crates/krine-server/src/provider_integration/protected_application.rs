@@ -272,7 +272,8 @@ async fn stop_child(child: &mut Option<Child>, output_complete: bool) -> Option<
     }
     for signal in ["-TERM", "-KILL"] {
         let _ = Command::new("/bin/kill")
-            .args([signal, &format!("-{id}")])
+            // procps otherwise parses a negative PID as options, potentially signaling -1.
+            .args([signal, "--", &format!("-{id}")])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -292,6 +293,70 @@ async fn stop_child(child: &mut Option<Child>, output_complete: bool) -> Option<
         }
     }
     panic!("owned Node process group did not stop");
+}
+
+#[tokio::test]
+async fn child_cleanup_preserves_unrelated_processes_and_original_exit_status() {
+    use std::os::unix::process::ExitStatusExt;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    fn group(script: &str) -> Child {
+        let mut command = Command::new("/bin/sh");
+        command.as_std_mut().process_group(0);
+        command
+            .args(["-c", script])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn owned test process group")
+    }
+
+    let mut canary = Some(group("exec sleep 60"));
+    let canary_id = canary.as_ref().unwrap().id().unwrap();
+    let mut child = None;
+    let result = catch_panic(async {
+        for (script, exits) in [
+            ("sleep 60 >/dev/null 2>&1 & echo ready; exit 27", true),
+            (
+                "trap '' TERM; sleep 60 >/dev/null 2>&1 & echo ready; wait",
+                false,
+            ),
+        ] {
+            child = Some(group(script));
+            let process = child.as_mut().unwrap();
+            let id = process.id().unwrap();
+            let mut stdout = BufReader::new(process.stdout.take().unwrap());
+            let mut ready = String::new();
+            tokio::time::timeout(Duration::from_secs(5), stdout.read_line(&mut ready))
+                .await
+                .expect("child group startup deadline")
+                .expect("child group startup output");
+            assert_eq!(ready, "ready\n");
+            let status = stop_child(&mut child, exits).await.unwrap();
+            if exits {
+                assert_eq!(status.code(), Some(27), "preserve the leader's failure");
+            } else {
+                assert_eq!(status.signal(), Some(9), "escalate an ignored SIGTERM");
+            }
+            assert!(!group_has_live_members(id, false).await);
+            assert!(
+                group_has_live_members(canary_id, true).await,
+                "cleanup must preserve the unrelated canary group"
+            );
+        }
+    })
+    .await;
+    let child_cleanup = catch_panic(async { stop_child(&mut child, false).await }).await;
+    let canary_cleanup = catch_panic(async { stop_child(&mut canary, false).await }).await;
+    for outcome in [
+        result,
+        child_cleanup.map(|_| ()),
+        canary_cleanup.map(|_| ()),
+    ] {
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
 }
 
 async fn group_has_live_members(id: u32, leader_only: bool) -> bool {
