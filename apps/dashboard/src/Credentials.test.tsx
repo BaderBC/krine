@@ -59,7 +59,23 @@ beforeEach(() => {
   });
   vi.spyOn(api, "get").mockImplementation(
     async <T,>(path: string): Promise<T> => {
-      if (path === "/setup") return structuredClone(setup) as T;
+      if (path === "/setup" || path.startsWith("/setup?"))
+        return {
+          ...structuredClone(setup),
+          observations: {
+            tracked_since: 1,
+            check: new URLSearchParams(path.split("?")[1]).get("check"),
+            client_evidence: null,
+            backend_event: null,
+            check_attempt: null,
+          },
+          history_retention: {
+            days: 30,
+            requested_days: 30,
+            applying: false,
+            available_since: 0,
+          },
+        } as T;
       if (path === "/providers") return { items: [] } as T;
       if (path.startsWith("/credentials?"))
         return { items: structuredClone(records), next_cursor: null } as T;
@@ -550,7 +566,10 @@ it.each([
     valid = true;
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText("Application credentials", { selector: "summary" });
-    expect(screen.queryByRole("alert")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh receipts" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   },
 );
 

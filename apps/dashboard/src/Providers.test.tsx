@@ -76,8 +76,21 @@ beforeEach(() => {
         return { items: [], next_cursor: null } as T;
       if (path === "/providers")
         return { items: [structuredClone(current)] } as T;
-      if (path === "/setup")
+      if (path === "/setup" || path.startsWith("/setup?"))
         return {
+          observations: {
+            tracked_since: 1,
+            check: new URLSearchParams(path.split("?")[1]).get("check"),
+            client_evidence: null,
+            backend_event: null,
+            check_attempt: null,
+          },
+          history_retention: {
+            days: 30,
+            requested_days: 30,
+            applying: false,
+            available_since: 0,
+          },
           browser_url: "https://krine.example",
           server_url: "https://krine.example",
           public_key: "pk_public",

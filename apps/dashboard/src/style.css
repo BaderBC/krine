@@ -789,7 +789,7 @@ dialog .login-form {
   th {
     padding-right: 9px;
   }
-  .table-scroll table:has(th:nth-child(4)) {
+  .table-scroll:not(.decision-table) table:has(th:nth-child(4)) {
     min-width: 560px;
   }
   .version-list li {
@@ -1031,4 +1031,100 @@ dialog .login-form {
 .captured-relationships > li {
   content-visibility: auto;
   contain-intrinsic-size: auto 55px;
+}
+
+.connection-observations {
+  margin: 22px 0;
+  max-width: 850px;
+}
+.connection-observations h3 {
+  margin-bottom: 8px;
+}
+.receipt-list {
+  margin: 18px 0 10px;
+}
+.receipt-list > div {
+  display: grid;
+  grid-template-columns: minmax(125px, 1fr) minmax(0, 4fr);
+  gap: 8px 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e0e3d9;
+}
+.receipt-list dt {
+  font-weight: 500;
+}
+.receipt-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.receipt-basis {
+  display: block;
+  font-size: 12px;
+  color: #686f62;
+  margin-top: 3px;
+}
+.check-receipt {
+  overflow-wrap: anywhere;
+}
+.retention-details {
+  margin: 14px 0;
+}
+.captured-reason {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.captured-value {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+@media (max-width: 600px) {
+  .receipt-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+.compact-label {
+  display: none;
+}
+@media (max-width: 600px) {
+  .decision-table table {
+    display: block;
+    min-width: 0;
+  }
+  .decision-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .decision-table tbody {
+    display: block;
+  }
+  .decision-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 14px;
+    padding: 18px 0;
+    border-bottom: 1px solid #e0e3d9;
+  }
+  .decision-table td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .decision-table td:nth-child(3),
+  .decision-table td:nth-child(4) {
+    grid-column: 1 / -1;
+  }
+  .decision-table .compact-label {
+    display: inline;
+    color: #686f62;
+  }
 }

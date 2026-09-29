@@ -10,6 +10,8 @@ import {
   useAddressedParam,
 } from "./addresses";
 import { encode } from "./api";
+import { CapturedReason } from "./CapturedReason";
+import { Retention } from "./Retention";
 import { CapturedRelationships, Relationships } from "./Relationships";
 import {
   InvestigationLink as Link,
@@ -53,7 +55,7 @@ function reasonLabel(reason: string) {
 
 export function DecisionRows({ items }: { items: Decision[] }) {
   return (
-    <div className="table-scroll">
+    <div className="table-scroll decision-table">
       <table>
         <thead>
           <tr>
@@ -84,9 +86,12 @@ export function DecisionRows({ items }: { items: Decision[] }) {
                 >
                   {resultLabel(decision)}
                 </Link>
-                <p className="help">{reasonLabel(decision.reason)}</p>
+                <CapturedReason decision={decision} />
               </td>
               <td>
+                <span className="compact-label" aria-hidden="true">
+                  Subject ·{" "}
+                </span>
                 <EntityLink
                   kind={decision.user_id ? "user" : "client"}
                   id={decision.user_id ?? decision.client_id}
@@ -359,6 +364,7 @@ export function Activity() {
                 Change your filters or time range. Records appear after
                 analytical export.
               </p>
+              <Retention value={resource.data.retention} compact />
               <Link
                 to={
                   events
