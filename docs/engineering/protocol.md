@@ -100,7 +100,7 @@ The Rust `krine-core` serde types are the canonical policy/catalog/trace schema.
 
 Admin prefix is `/v1/admin`. Login `POST /session { password }` and current `GET /session` return `{ csrf_token, expires_at }`; `DELETE /session` logs out. Other endpoints require the session and mutation CSRF protections above. The deployment provisions the admin password; Settings manages browser and server credentials with create/revoke controls. Server credentials never authorize admin operations.
 
-Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, max 100. Opaque cursors use stable descending `(created_at,id)` order. Search filters are bounded ≤128 bytes. Every mutation except login requires `Idempotency-Key`, immutable payload validation and 24-hour replay; versioned edits additionally compare `revision` atomically. Sensitive provider writes replay only the redacted response.
+Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, max 100. Opaque cursors use stable descending `(created_at,id)` order. Check-list `q` search accepts at most 128 bytes; Activity scalar filters accept at most 256 bytes. Every mutation except login requires `Idempotency-Key`, immutable payload validation and 24-hour replay; versioned edits additionally compare `revision` atomically. Sensitive provider writes replay only the redacted response.
 
 | Method and path | Input / response |
 | --- | --- |

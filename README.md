@@ -29,7 +29,9 @@ cd krine
 
 Open [127.0.0.1:8080](http://127.0.0.1:8080). Sign in with the value in `deploy/secrets/admin_password`. The command builds the dashboard and Axum service in one image, generates independent credentials, starts PostgreSQL, ClickHouse and Valkey, and waits for readiness. Existing secrets and data survive subsequent runs. Set `KRINE_HTTP_PORT` to choose another loopback port.
 
-Create a named check in **Checks**, edit its policy, and review it before publishing. The local preset permits browser participation from `http://localhost:3000`; set `KRINE_ALLOWED_ORIGINS` to your application's exact origin. Use the browser key in `deploy/secrets/browser_public_key` and keep `deploy/secrets/server_secret` exclusively on your application's backend.
+Create a named check in **Checks**, edit its policy, and review it before publishing. The local preset permits browser participation from `http://localhost:3000`; set `KRINE_ALLOWED_ORIGINS` to your application's exact origin.
+
+On a fresh installation, use the browser key in `deploy/secrets/browser_public_key` and keep `deploy/secrets/server_secret` exclusively on your application's backend. Krine imports this pair once. Manage replacements and revocation in **Settings → Application connection**; editing the bootstrap files or restarting cannot rotate or restore revoked keys.
 
 To try a complete protected application, run `./scripts/up.sh --local --example`, then open [localhost:3000](http://localhost:3000). Follow the [trial example](examples/protected-app/README.md#run-with-docker) to read its generated account passwords and explicitly publish its trial policy. The opt-in ingress gives both services the same observed browser IP; no policy is seeded at startup.
 
@@ -39,15 +41,7 @@ Local HTTP enables development cookies and is intended for your machine. Follow 
 
 The [SDK guide](docs/engineering/sdks.md) covers browser proofs, authoritative events, checks, durable retries and verification continuation. Your application must deduplicate its own protected business action, including after availability fallback.
 
-SDK releases have not yet been published to a package registry. Build and pack the three packages with Node.js 24 LTS and pnpm 11.28.2:
-
-```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm --filter @krine/protocol --filter @krine/browser --filter @krine/server pack --pack-destination /tmp/krine-sdk
-```
-
-Install the local protocol and browser tarballs with `pnpm add` in your browser workspace; install the protocol and server tarballs in your backend workspace. Applications inside this repository can use pnpm workspace dependencies.
+SDK releases have not yet been published to a package registry. Follow the [local package installation instructions](docs/engineering/sdks.md#install-the-sdk-packages) to build and consume the tarballs with pnpm. Applications inside this repository can use pnpm workspace dependencies.
 
 ## Develop and verify
 

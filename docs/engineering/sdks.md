@@ -12,7 +12,36 @@ pnpm test
 pnpm typecheck
 ```
 
-The test suite includes a real loopback HTTP test; its environment must allow binding a local port. To consume release packages in an application, use `pnpm add @krine/browser` in the browser workspace and `pnpm add @krine/server` in the backend workspace. Until releases are published, pnpm workspace dependencies or `pnpm pack` provide the same build outputs.
+The test suite includes a real loopback HTTP test; its environment must allow binding a local port.
+
+## Install the SDK packages
+
+Registry releases are not yet published. From the Krine repository, build and pack the three packages:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm --filter @krine/protocol --filter @krine/browser --filter @krine/server pack --pack-destination /tmp/krine-sdk
+```
+
+In each consuming pnpm project, merge this override into its root `pnpm-workspace.yaml`, preserving existing workspace settings and overrides. Create the file if the project has none. The packed SDKs depend on `@krine/protocol@^0.1.0`; adding the protocol tarball as a direct dependency alone does not redirect that transitive dependency away from the registry.
+
+```yaml
+overrides:
+  '@krine/protocol': file:/tmp/krine-sdk/krine-protocol-0.1.0.tgz
+```
+
+Run the appropriate command in the consuming package directory:
+
+```sh
+# Browser package
+pnpm add /tmp/krine-sdk/krine-protocol-0.1.0.tgz /tmp/krine-sdk/krine-browser-0.1.0.tgz
+
+# Backend package
+pnpm add /tmp/krine-sdk/krine-protocol-0.1.0.tgz /tmp/krine-sdk/krine-server-0.1.0.tgz
+```
+
+For repeatable installs, keep the tarballs with your application's dependency artifacts and adjust the override and install paths together. The temporary paths above are for a local trial. Applications inside this repository use `workspace:^` dependencies instead.
 
 ## Browser participation
 
