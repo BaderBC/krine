@@ -19,7 +19,7 @@ h2 { font-size: 1.15rem; font-weight: 600; margin-top: 0; }
 .intro { font-size: 1.1rem; color: #565b50; max-width: 34rem; margin-bottom: 2rem; }
 form { max-width: 360px; display: grid; gap: .55rem; }
 label { font-size: .9rem; margin-top: .65rem; }
-input { background: #fff; color: inherit; padding: .7rem; width: 100%; border: 1px solid #929989; border-radius: 4px; min-height: 44px; }
+input { background: #fff; color: inherit; padding: .7rem; width: 100%; border: 1px solid #7f8776; border-radius: 4px; min-height: 44px; }
 form button { justify-self: start; margin-top: .3rem; }
 .account-line { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 3rem; color: #62665c; }
 .text-button { padding: .4rem 0; background: transparent; border: 0; color: #2f4738; text-decoration: underline; text-underline-offset: 4px; }
