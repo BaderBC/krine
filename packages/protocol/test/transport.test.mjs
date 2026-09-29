@@ -107,3 +107,17 @@ test('refusing a streaming redirect promptly closes the unfinished HTTP response
   } finally { clearTimeout(timer); }
   assert.equal(targetRequests, 0);
 });
+
+test('default fetch retains its global receiver as required by native browsers', async t => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async function (url, init) {
+    assert.equal(this, globalThis, 'Native Window.fetch rejects a Transport receiver');
+    assert.equal(url, 'https://krine.example/v1/browser/context');
+    assert.equal(init.method, 'POST'); assert.equal(init.body, '{"signals":{}}');
+    calls++;
+    return json({ accepted: true });
+  });
+  const transport = new Transport(options, { 'X-Krine-Public-Key': 'public' });
+  assert.deepEqual(await transport.post('/v1/browser/context', '{"signals":{}}'), { accepted: true });
+  assert.equal(calls, 1);
+});

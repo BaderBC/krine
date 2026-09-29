@@ -42,11 +42,13 @@ export class Transport {
     if (url.username || url.password || url.search || url.hash
       || (url.protocol !== 'https:' && !(url.protocol === 'http:' && options.allowInsecureHttp === true))) invalidInput();
     this.url = url.href.replace(/\/$/, '');
-    this.fetch = options.fetch ?? globalThis.fetch;
+    const fetch = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? 3000;
     this.retries = options.retries ?? 1;
-    if (typeof this.fetch !== 'function' || !Number.isInteger(this.timeoutMs) || this.timeoutMs < 1
+    if (typeof fetch !== 'function' || !Number.isInteger(this.timeoutMs) || this.timeoutMs < 1
       || this.timeoutMs > 60_000 || !Number.isInteger(this.retries) || this.retries < 0 || this.retries > 3) invalidInput();
+    // Native Window.fetch requires its global receiver. Injected transports retain their contract.
+    this.fetch = options.fetch ?? fetch.bind(globalThis);
   }
 
   async post(path: string, body: string): Promise<unknown> {
