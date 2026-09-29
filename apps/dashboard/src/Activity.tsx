@@ -206,7 +206,8 @@ export function Activity() {
     const next = new URLSearchParams();
     if (events) next.set("view", "events");
     const key = String(form.get("search_kind"));
-    const value = String(form.get("search") ?? "").trim();
+    const search = String(form.get("search") ?? "");
+    const value = key === "entity" ? search : search.trim();
     if (key === "record" && value) {
       rememberActivityPosition(origin);
       navigate(

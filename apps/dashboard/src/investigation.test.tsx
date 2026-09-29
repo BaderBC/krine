@@ -282,3 +282,166 @@ it("exposes an exact UTC timestamp to keyboard and assistive technology", () => 
   time.focus();
   expect(document.activeElement).toBe(time);
 });
+
+describe("exact entity search", () => {
+  const identifiers = [
+    " leading",
+    "trailing ",
+    "   ",
+    "\u00a0user\u00a0",
+    "\u00a0",
+  ];
+  for (const view of ["decisions", "events"] as const) {
+    it.each(identifiers)(
+      `submits and repeats the exact ${view} entity identifier %j`,
+      async (id) => {
+        const user = userEvent.setup();
+        const router = mount(
+          `/activity?view=${view}&from=100&to=200&cursor=older`,
+        );
+        await screen.findByRole("heading", { name: "Activity" });
+        await user.selectOptions(
+          screen.getByRole("combobox", { name: "Find by" }),
+          "entity",
+        );
+        await user.type(screen.getByRole("searchbox", { name: "Search" }), id);
+        await user.click(screen.getByRole("button", { name: "Find" }));
+        const expectedQuery = new URLSearchParams({
+          entity: id,
+          from: "100",
+          to: "200",
+        });
+        await waitFor(() =>
+          expect(api.get).toHaveBeenLastCalledWith(
+            `/activity/${view}?${expectedQuery}`,
+          ),
+        );
+        let params = new URLSearchParams(router.state.location.search);
+        expect(params.get("entity")).toBe(id);
+        expect(params.has("entity_kind")).toBe(false);
+        expect(params.has("cursor")).toBe(false);
+        expect(
+          (
+            screen.getByRole("searchbox", {
+              name: "Search",
+            }) as HTMLInputElement
+          ).value,
+        ).toBe(id);
+        await user.click(screen.getByRole("button", { name: "Find" }));
+        params = new URLSearchParams(router.state.location.search);
+        expect(params.get("entity")).toBe(id);
+        expect(params.get("from")).toBe("100");
+        expect(params.get("to")).toBe("200");
+        expect(api.get).toHaveBeenLastCalledWith(
+          `/activity/${view}?${expectedQuery}`,
+        );
+      },
+    );
+  }
+  it.each([" user ", "\u00a0"])(
+    "keeps the typed scope when resubmitting the same raw user ID %j and refining another filter",
+    async (id) => {
+      const user = userEvent.setup();
+      const router = mount(
+        `/activity?${new URLSearchParams({ entity: id, entity_kind: "user", from: "100", to: "200", cursor: "older" })}`,
+      );
+      await screen.findByText(/Scoped to user/);
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Find by" }),
+        "entity",
+      );
+      await user.type(screen.getByRole("searchbox", { name: "Search" }), id);
+      await user.click(screen.getByRole("button", { name: "Find" }));
+      const expectedQuery = new URLSearchParams({
+        entity: id,
+        from: "100",
+        to: "200",
+        entity_kind: "user",
+      });
+      await waitFor(() =>
+        expect(api.get).toHaveBeenLastCalledWith(
+          `/activity/decisions?${expectedQuery}`,
+        ),
+      );
+      expect(
+        new URLSearchParams(router.state.location.search).get("entity_kind"),
+      ).toBe("user");
+      // Typed scope remains separate when the form returns to its check-name filter.
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search" }),
+        "  can_claim  ",
+      );
+      await user.click(screen.getByRole("button", { name: "Find" }));
+      const refined = new URLSearchParams({
+        check: "can_claim",
+        entity: id,
+        from: "100",
+        to: "200",
+        entity_kind: "user",
+      });
+      await waitFor(() =>
+        expect(api.get).toHaveBeenLastCalledWith(
+          `/activity/decisions?${refined}`,
+        ),
+      );
+      await user.click(screen.getByRole("button", { name: "Find" }));
+      const params = new URLSearchParams(router.state.location.search);
+      expect(params.get("entity")).toBe(id);
+      expect(params.get("entity_kind")).toBe("user");
+      expect(params.get("check")).toBe("can_claim");
+    },
+  );
+  it("drops the old typed scope when the new raw ID differs only in surrounding spaces", async () => {
+    const user = userEvent.setup();
+    const router = mount(
+      "/activity?entity=user&entity_kind=user&from=100&to=200",
+    );
+    await screen.findByText(/Scoped to user/);
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Find by" }),
+      "entity",
+    );
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search" }),
+      " user ",
+    );
+    await user.click(screen.getByRole("button", { name: "Find" }));
+    await waitFor(() =>
+      expect(api.get).toHaveBeenLastCalledWith(
+        "/activity/decisions?entity=+user+&from=100&to=200",
+      ),
+    );
+    const params = new URLSearchParams(router.state.location.search);
+    expect(params.get("entity")).toBe(" user ");
+    expect(params.has("entity_kind")).toBe(false);
+  });
+  it.each([
+    ["decisions", "check", "can_claim"],
+    ["decisions", "operation_id", "operation_1"],
+    ["events", "name", "login"],
+  ])(
+    "still trims surrounding spaces from the %s %s grammar",
+    async (view, key, value) => {
+      const user = userEvent.setup();
+      const router = mount(`/activity?view=${view}&range=all`);
+      await screen.findByRole("heading", { name: "Activity" });
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Find by" }),
+        key!,
+      );
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search" }),
+        `  ${value}  `,
+      );
+      await user.click(screen.getByRole("button", { name: "Find" }));
+      await waitFor(() =>
+        expect(api.get).toHaveBeenLastCalledWith(
+          `/activity/${view}?${key}=${value}`,
+        ),
+      );
+      expect(new URLSearchParams(router.state.location.search).get(key!)).toBe(
+        value,
+      );
+    },
+  );
+});
