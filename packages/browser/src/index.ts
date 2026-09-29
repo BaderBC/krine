@@ -28,6 +28,7 @@ export class KrineBrowser {
   private readonly local: StorageLike | null;
   private readonly session: StorageLike | null;
   private readonly storageKey: string;
+  private readonly legacyStorageKey: string;
   private readonly signals: () => Signals | Promise<Signals>;
   private context: BrowserContext | undefined;
   private loading: Promise<BrowserContext> | undefined;
@@ -37,7 +38,8 @@ export class KrineBrowser {
     this.transport = new Transport(options, { 'X-Krine-Public-Key': options.publicKey });
     this.local = options.localStorage === undefined ? browserStorage('localStorage') : options.localStorage;
     this.session = options.sessionStorage === undefined ? browserStorage('sessionStorage') : options.sessionStorage;
-    this.storageKey = `krine:v1:${this.transport.url}:${options.publicKey}`;
+    this.storageKey = `krine:v2:${this.transport.url}`;
+    this.legacyStorageKey = `krine:v1:${this.transport.url}:${options.publicKey}`;
     this.signals = options.signals ?? collectSignals;
   }
 
@@ -80,17 +82,21 @@ export class KrineBrowser {
   }
 
   private async createContext(): Promise<BrowserContext> {
-    const clientToken = this.context?.client_token ?? read(this.local, this.storageKey);
+    const savedClient = this.context?.client_token
+      ?? read(this.local, this.storageKey) ?? read(this.local, this.legacyStorageKey);
+    const clientToken = string(savedClient, 4096) ? savedClient : undefined;
     let sessionToken = this.context?.session_token;
     if (!sessionToken && clientToken) {
       try {
-        const saved: unknown = JSON.parse(read(this.session, this.storageKey) ?? 'null');
+        const saved: unknown = JSON.parse(
+          read(this.session, this.storageKey) ?? read(this.session, this.legacyStorageKey) ?? 'null',
+        );
         if (record(saved) && saved.client_token === clientToken && string(saved.session_token, 4096)) sessionToken = saved.session_token;
       } catch { /* Unreadable credentials are replaced with a Krine-issued context. */ }
     }
     const signals = normalizeSignals(await this.signals());
     const context = parseContext(await this.transport.post('/v1/browser/context', jsonBody({
-      ...(clientToken && string(clientToken, 4096) ? { client_token: clientToken } : {}),
+      ...(clientToken ? { client_token: clientToken } : {}),
       ...(sessionToken ? { session_token: sessionToken } : {}),
       signals,
     })));
