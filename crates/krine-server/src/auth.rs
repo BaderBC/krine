@@ -105,11 +105,15 @@ pub async fn boundary(State(app): State<App>, mut request: Request, next: Next) 
                 {
                     return Err(ApiError::forbidden());
                 }
-                if !header(request.headers(), "x-krine-public-key")
-                    .is_some_and(|v| util::equal(v, &app.config.public_key))
-                {
-                    return Err(ApiError::unauthorized());
-                }
+                let public_key = header(request.headers(), "x-krine-public-key")
+                    .ok_or_else(ApiError::unauthorized)?;
+                let credential = crate::credentials::authenticate(
+                    &app,
+                    crate::credentials::Kind::Browser,
+                    public_key,
+                )
+                .await?;
+                request.extensions_mut().insert(credential);
                 rate(
                     &app,
                     &format!("browser:{peer}"),
@@ -142,9 +146,13 @@ pub async fn boundary(State(app): State<App>, mut request: Request, next: Next) 
                 let secret = header(request.headers(), "authorization")
                     .and_then(|s| s.strip_prefix("Bearer "))
                     .ok_or_else(ApiError::unauthorized)?;
-                if !util::equal(secret, &app.config.server_secret) {
-                    return Err(ApiError::unauthorized());
-                }
+                let credential = crate::credentials::authenticate(
+                    &app,
+                    crate::credentials::Kind::Server,
+                    secret,
+                )
+                .await?;
+                request.extensions_mut().insert(credential);
                 rate(&app, "server", app.config.server_rate, 60).await?;
             }
             Ok(None)

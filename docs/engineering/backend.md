@@ -9,8 +9,8 @@ authenticated context resolution, backend events and associations, published
 check evaluation, durable retries, operator sessions, policy draft/publication
 history, metric discovery, current entity inspection, durable browser observations, and
 activity backed by the ClickHouse outbox, tested provider configuration, IP
-intelligence, and persisted challenge continuation. Credential management and
-relationship correction remain separate implementation units. Challenge policies cannot be
+intelligence, persisted challenge continuation, and durable application credential
+creation/revocation. Relationship correction remains a separate implementation unit. Challenge policies cannot be
 published before verification is configured. Unconfigured provider metrics are
 explicitly unknown.
 
@@ -28,8 +28,8 @@ or logs.
 | `KRINE_CLICKHOUSE_URL` | ClickHouse HTTP endpoint |
 | `KRINE_CLICKHOUSE_USER` | Database user; defaults to `krine` |
 | `KRINE_CLICKHOUSE_PASSWORD` | ClickHouse password |
-| `KRINE_PUBLIC_KEY` | Bootstrap browser key, at least 16 bytes |
-| `KRINE_SERVER_SECRET` | Independent backend credential, at least 32 bytes |
+| `KRINE_PUBLIC_KEY` | Browser key imported once on first startup; 16–512 printable ASCII bytes without spaces |
+| `KRINE_SERVER_SECRET` | Distinct server secret imported once on first startup; 32–512 printable ASCII bytes without spaces |
 | `KRINE_ADMIN_PASSWORD` | Operator password, at least 16 bytes |
 | `KRINE_PUBLIC_URL` | Exact external API origin, without trailing slash |
 | `KRINE_ADMIN_ORIGIN` | Exact dashboard origin; defaults to public URL |
@@ -42,6 +42,13 @@ or logs.
 | `KRINE_SERVER_RATE_PER_MINUTE` | Backend requests per installation; defaults to 3,000 |
 | `KRINE_LOGIN_RATE_PER_MINUTE` | Operator login attempts per source IP; defaults to 10 |
 | `KRINE_MAX_PENDING_OUTBOX` | Delivery capacity including unfinished-attempt reservations; defaults to 1,000,000 records |
+
+Application credentials are thereafter managed through the authenticated
+credential API. Changing bootstrap environment values or restarting does not add
+keys or restore revoked ones. They remain required environment inputs for
+deployment compatibility. Stop all older environment-authenticating binaries
+before upgrading. [ADR 0012](../decisions/0012-durable-application-credentials.md)
+defines import, one-time secret disclosure, revocation and backup semantics.
 
 Origins use HTTPS unless development mode is enabled. Trust only the addresses
 of actual ingress proxies; their forwarding chain must remove untrusted appended

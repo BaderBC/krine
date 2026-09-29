@@ -90,6 +90,14 @@ Optional application examples can join the Compose network key `application` and
 
 The application receives only its own database passwords and three independent bootstrap credentials. PostgreSQL's administrative password is never mounted in the application. Changing files does not rotate passwords already stored in database volumes. Coordinate database password changes with service configuration and preserve valid credentials during the transition.
 
+Browser and server application credentials are imported into PostgreSQL once.
+Rotate them through the authenticated credential API; changing their bootstrap
+files or restarting cannot restore revoked credentials. Preserve the credential
+rows and permanent bootstrap marker in backups. When upgrading from
+environment-only authentication, stop every old application process before
+starting the upgraded service; old binaries cannot honor durable revocation.
+The administrator password remains operator-provisioned environment/file input.
+
 ## Upgrade
 
 Back up before an upgrade. Review new migrations and dependency notes, fetch the reviewed release, then run `./scripts/up.sh` with the same configuration and secret directory. The helper builds first, stops the old application, and only then starts the new image; stores remain running. Do not run old and new application writers together during a schema change. PostgreSQL migrations run before the new listener opens. Restarting a container uses the same image and does not rebuild it.
@@ -108,7 +116,7 @@ Volume persistence does not protect against host or disk loss. Back up PostgreSQ
 
 Test restoration to a separate deployment before relying on backups. For a coordinated backup, stop the application writer, finish any acknowledged requests, and take database backups at that stopped boundary. Preserve ClickHouse history: exported PostgreSQL reliability envelopes expire after 48 hours and cannot recreate older analytical history. A newer PostgreSQL outbox can re-export recent records safely; duplicate export does not create duplicate activity.
 
-During recovery, keep ingress closed. Restore durable PostgreSQL state and ClickHouse history from the intended recovery boundary. Start Valkey with a new empty data volume rather than restoring old short-lived credentials or proofs. The backend rebuilds current event counters from retained durable envelopes and establishes a fresh generation before readiness. Existing browser credentials are invalidated, so subsequent participation receives new client/session context; historical entities and backend-known account history remain stored. Unclaimed proofs must be obtained again. Recorded operations remain retryable from PostgreSQL and retain their unique proof ownership. Never delete operation records merely to make recovery pass.
+During recovery, keep ingress closed. Restore durable PostgreSQL state and ClickHouse history from the intended recovery boundary. Start Valkey with a new empty data volume rather than restoring old short-lived credentials or proofs. The backend rebuilds current event counters from retained durable envelopes and establishes a fresh generation before readiness. Existing client/session tokens are invalidated, so subsequent participation receives new context; historical entities and backend-known account history remain stored. Application keys and their revocation state survive in PostgreSQL. Unclaimed proofs must be obtained again. Recorded operations remain retryable from PostgreSQL and retain their unique proof ownership. Never delete operation records merely to make recovery pass.
 
 Verify readiness, an authoritative event/check flow, same-operation retry, history availability and expected configuration before reopening ingress. If the PostgreSQL backup loses accepted operations, reconcile the application's durable business-operation records before restoring protected traffic; Krine cannot infer lost authorizations from an older database. Application business-action idempotency remains mandatory. An older Valkey snapshot is detected by incarnation/watermark checks for counter recovery, but it is not a substitute for this controlled disaster-recovery procedure.
 

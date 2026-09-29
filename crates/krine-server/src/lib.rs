@@ -3,6 +3,7 @@ mod auth;
 mod browser;
 mod checks;
 pub mod config;
+mod credentials;
 mod entities;
 pub mod error;
 mod events;
@@ -23,6 +24,12 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
 
+/// Durable identity of the application credential that authenticated a request.
+#[derive(Clone)]
+pub struct ApplicationCredential {
+    pub id: String,
+}
+
 #[derive(Clone)]
 pub struct App {
     pub config: Arc<Config>,
@@ -36,6 +43,7 @@ impl App {
     pub async fn connect(
         config: Config,
     ) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        credentials::validate_bootstrap(&config)?;
         let db = PgPoolOptions::new()
             .max_connections(20)
             .acquire_timeout(Duration::from_secs(2))
@@ -56,6 +64,9 @@ impl App {
             .connect(&config.database_url)
             .await?;
         sqlx::migrate!("../../migrations").run(&db).await?;
+        credentials::bootstrap(&db, &config)
+            .await
+            .map_err(|_| "Could not initialize application credentials")?;
         let redis = ConnectionManager::new_with_config(
             redis::Client::open(config.valkey_url.as_str())?,
             ConnectionManagerConfig::new()
@@ -114,6 +125,14 @@ pub fn router(app: App) -> Router {
         )
         .route("/v1/admin/entities/{kind}/{id}", get(entities::detail))
         .route("/v1/admin/setup", get(admin::setup))
+        .route(
+            "/v1/admin/credentials",
+            get(credentials::list).post(credentials::create),
+        )
+        .route(
+            "/v1/admin/credentials/{id}/revocations",
+            post(credentials::revoke),
+        )
         .route("/v1/admin/providers", get(providers::list))
         .route("/v1/admin/providers/{capability}", put(providers::save))
         .route(

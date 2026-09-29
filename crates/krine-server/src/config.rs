@@ -75,6 +75,7 @@ impl Config {
         {
             return Err("Secrets or outbox capacity do not meet minimum requirements".into());
         }
+        crate::credentials::validate_bootstrap(&result)?;
         Ok(result)
     }
 }
