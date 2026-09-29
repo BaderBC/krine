@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { InvestigationLink as Link } from "./navigation";
-import { api, encode, readErrorMessage } from "./api";
+import { api, ApiError, encode, readErrorMessage } from "./api";
 import type { Page } from "./types";
 
-export function useResource<T>(path: string | null) {
+export function useResource<T>(
+  path: string | null,
+  validate?: (value: unknown) => value is T,
+) {
   const [state, setState] = useState<{
     path: string | null;
     data?: T;
@@ -26,6 +29,12 @@ export function useResource<T>(path: string | null) {
     );
     try {
       const data = await api.get<T>(path);
+      if (validate && !validate(data))
+        throw new ApiError(
+          200,
+          "invalid_response",
+          "The response could not be read.",
+        );
       if (current === generation.current)
         setState({
           path,
@@ -42,7 +51,7 @@ export function useResource<T>(path: string | null) {
           error: readErrorMessage(error),
         }));
     }
-  }, [path]);
+  }, [path, validate]);
   useEffect(() => {
     void refresh();
     return () => {

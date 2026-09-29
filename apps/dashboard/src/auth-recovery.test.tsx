@@ -70,10 +70,15 @@ it.each([401, 403])(
       if (path === "/setup")
         return json({
           public_key: "pk_fixture",
+          browser_credential_id: "cred_browser",
+          active_credentials: { browser: 1, server: 1 },
           browser_url: "http://fixture",
           server_url: "http://fixture",
           allowed_origins: [],
-          sdk: {},
+          sdk: {
+            browser_package: "@krine/browser",
+            server_package: "@krine/server",
+          },
         });
       if (path === "/providers") return json({ items: [current] });
       if (path.endsWith("/tests"))
@@ -200,5 +205,125 @@ it.each([
       code: "invalid_response",
     });
     expect(transport.csrf).toBe("known_csrf");
+  },
+);
+
+it.each([401, 403])(
+  "recovers credential creation after a malformed committed response and %i without losing its original request",
+  async (status) => {
+    const user = userEvent.setup();
+    const requests: RequestInit[] = [];
+    const credential = {
+      id: "cred_recovery",
+      kind: "server",
+      label: "Recovery test",
+      source: "administrator",
+      public_key: null,
+      created_at: 1,
+      revoked_at: null,
+      revoked_by: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        const path = url.replace("/v1/admin", "");
+        if (path === "/session")
+          return json({
+            csrf_token:
+              init.method === "POST" ? "renewed_csrf" : "original_csrf",
+            expires_at: Date.now() + 60_000,
+          });
+        if (path === "/setup")
+          return json({
+            public_key: "pk_fixture",
+            browser_credential_id: "cred_browser",
+            active_credentials: { browser: 1, server: 1 },
+            browser_url: "https://fixture.example",
+            server_url: "https://fixture.example",
+            allowed_origins: [],
+            sdk: {
+              browser_package: "@krine/browser",
+              server_package: "@krine/server",
+            },
+          });
+        if (path === "/providers") return json({ items: [] });
+        if (path.startsWith("/credentials?"))
+          return json({
+            items: requests.length ? [credential] : [],
+            next_cursor: null,
+          });
+        if (path === "/credentials" && init.method === "POST") {
+          requests.push(structuredClone(init));
+          if (requests.length === 1) return json(null);
+          if (requests.length === 2)
+            return json(
+              { error: { code: "unauthenticated", message: "Sign in again" } },
+              status,
+            );
+          return json({
+            credential,
+            secret: null,
+            secret_status: "unrecoverable",
+          });
+        }
+        throw new Error(`Unexpected fixture request ${path}`);
+      }),
+    );
+    const router = createMemoryRouter(
+      [
+        {
+          element: <App />,
+          children: [{ path: "/settings", element: <Settings /> }],
+        },
+      ],
+      { initialEntries: ["/settings"] },
+    );
+    render(<RouterProvider router={router} />);
+    await user.click(
+      await screen.findByText("Application credentials", {
+        selector: "summary",
+      }),
+    );
+    const panel = document.querySelector("#credentials");
+    await user.click(screen.getByRole("button", { name: "Create credential" }));
+    await user.selectOptions(
+      screen.getByLabelText("Credential type"),
+      "server",
+    );
+    await user.type(screen.getByLabelText("Label"), "Recovery test");
+    await user.click(
+      screen.getByRole("button", { name: "Create server secret" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Retry same request" }),
+    );
+    await screen.findByRole("heading", { name: "Sign in again." });
+    expect(document.querySelector("#credentials")).toBe(panel);
+    const dialog = screen.getByRole("dialog");
+    await user.type(
+      within(dialog).getByLabelText("Administrator password"),
+      "fixture_admin_password",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Retry same request" }),
+    );
+    await screen.findByText(
+      /The credential was created, but its secret cannot be recovered/,
+    );
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request.body).toBe(requests[0]!.body);
+      expect(
+        (request.headers as Record<string, string>)["Idempotency-Key"],
+      ).toBe(
+        (requests[0]!.headers as Record<string, string>)["Idempotency-Key"],
+      );
+    }
+    expect(
+      (requests[2]!.headers as Record<string, string>)["X-CSRF-Token"],
+    ).toBe("renewed_csrf");
+    expect(sessionStorage.length).toBe(0);
+    expect(localStorage.length).toBe(0);
   },
 );

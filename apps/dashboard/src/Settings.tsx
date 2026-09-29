@@ -1,8 +1,11 @@
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useBeforeUnload, useBlocker, useSearchParams } from "react-router-dom";
 import { Loading, ResourceError, PageTitle, useResource } from "./shared";
 import { InvestigationLink as Link } from "./navigation";
 import { encode } from "./api";
 import { Providers } from "./Providers";
+import { Credentials } from "./Credentials";
+import type { SettingsWork } from "./Credentials";
 import type { Setup } from "./types";
 
 function Code({ children }: { children: string }) {
@@ -13,11 +16,78 @@ function Code({ children }: { children: string }) {
   );
 }
 
+function validOrigin(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
+function validSetup(value: unknown): value is Setup {
+  if (!value || typeof value !== "object") return false;
+  const setup = value as Setup;
+  const counts = setup.active_credentials;
+  return Boolean(
+    validOrigin(setup.browser_url) &&
+      validOrigin(setup.server_url) &&
+      Array.isArray(setup.allowed_origins) &&
+      setup.allowed_origins.every(validOrigin) &&
+      counts &&
+      Number.isSafeInteger(counts.browser) &&
+      counts.browser >= 0 &&
+      Number.isSafeInteger(counts.server) &&
+      counts.server >= 0 &&
+      (counts.browser === 0
+        ? setup.public_key === null && setup.browser_credential_id === null
+        : typeof setup.public_key === "string" &&
+          Boolean(setup.public_key) &&
+          typeof setup.browser_credential_id === "string" &&
+          Boolean(setup.browser_credential_id)) &&
+      typeof setup.sdk?.browser_package === "string" &&
+      Boolean(setup.sdk.browser_package) &&
+      typeof setup.sdk?.server_package === "string" &&
+      Boolean(setup.sdk.server_package),
+  );
+}
+
 export function Settings() {
-  const setup = useResource<Setup>("/setup");
+  const setup = useResource<Setup>("/setup", validSetup);
   const [params] = useSearchParams();
   const check = params.get("check") ?? "can_claim_trial";
   const config = setup.data;
+  const [providerWork, setProviderWork] = useState<SettingsWork>({
+    dirty: false,
+    pending: false,
+  });
+  const [credentialWork, setCredentialWork] = useState<SettingsWork>({
+    dirty: false,
+    pending: false,
+  });
+  const dirty = providerWork.dirty || credentialWork.dirty;
+  const pending = providerWork.pending || credentialWork.pending;
+  const blocker = useBlocker(
+    ({ nextLocation }) => dirty && nextLocation.pathname !== "/settings",
+  );
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (blocker.state === "blocked" && !dialog.current?.open)
+      dialog.current?.showModal();
+    else if (blocker.state !== "blocked" && dialog.current?.open)
+      dialog.current.close();
+  }, [blocker.state]);
+  useBeforeUnload((event) => {
+    if (dirty) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+  const httpOption = (url: string) =>
+    url.startsWith("http:")
+      ? "\n  allowInsecureHttp: true, // Local development only."
+      : "";
   return (
     <>
       <PageTitle title="Settings" />
@@ -59,20 +129,33 @@ export function Settings() {
               </div>
               <div>
                 <dt>Public browser key</dt>
-                <dd className="identifier">{config.public_key}</dd>
+                <dd className="identifier">
+                  {config.public_key ?? "No active browser key"}
+                </dd>
               </div>
             </dl>
             <p className="help">
               The public key identifies this installation. Keep the server
               secret exclusively in your application backend.
             </p>
+            <Credentials
+              setup={config}
+              refreshSetup={setup.refresh}
+              report={setCredentialWork}
+            />
             <details id="integration-reference">
               <summary>SDK integration reference</summary>
               <h3>Browser · @krine/browser 0.1.0</h3>
-              <Code>{`import { KrineBrowser } from '@krine/browser';
+              {config.public_key === null ? (
+                <p>
+                  Create a browser key in Application credentials to get a
+                  ready-to-use browser example.
+                </p>
+              ) : (
+                <Code>{`import { KrineBrowser } from '@krine/browser';
 
 const browser = new KrineBrowser({
-  url: ${JSON.stringify(config.browser_url)},
+  url: ${JSON.stringify(config.browser_url)},${httpOption(config.browser_url)}
   publicKey: ${JSON.stringify(config.public_key)},
 });
 await browser.initialize();
@@ -81,11 +164,12 @@ await browser.initialize();
 const { proof } = await browser.prepare(${JSON.stringify(check)});
 // Send proof with the request to your own backend.
 // Retain it unchanged for retries of this action.`}</Code>
+              )}
               <h3>Application backend · @krine/server 0.1.0</h3>
               <Code>{`import { KrineServer } from '@krine/server';
 
 const krine = new KrineServer({
-  url: ${JSON.stringify(config.server_url)},
+  url: ${JSON.stringify(config.server_url)},${httpOption(config.server_url)}
   secretKey: process.env.KRINE_SECRET_KEY!,
   fallback: 'ALLOW', // Default; example configuration, not observed state.
   checkFallbacks: { ${JSON.stringify(check)}: 'DENY' },
@@ -115,6 +199,13 @@ if (result.outcome === 'CHALLENGE_REQUIRED') {
   // Persist result, then execute your action exactly once.
   // result.source distinguishes evaluation from local fallback.
 }`}</Code>
+              {(config.browser_url.startsWith("http:") ||
+                config.server_url.startsWith("http:")) && (
+                <p className="help">
+                  These HTTP URLs require the explicit local-development option
+                  shown above. Use HTTPS and remove that option in production.
+                </p>
+              )}
               <p className="help">
                 This integration sketch uses your application’s durable
                 operation record. The application must persist pending/final
@@ -129,6 +220,31 @@ if (result.outcome === 'CHALLENGE_REQUIRED') {
                 <code>retry_until</code>. A known verification requirement never
                 becomes Allow through a continuation timeout.
               </p>
+              <details>
+                <summary>Evidence before the protected check</summary>
+                <Code>{`// Resolve the exact proof and backend-observed IP used by this attempt.
+const context = await krine.resolveContext({
+  interaction: { proof: request.proof, check: request.check, ip: request.ip },
+});
+await krine.associate({
+  association_id: operation.associationId,
+  client_id: context.client_id,
+  user_id: authenticatedUser.id,
+});
+await krine.event({
+  event_id: operation.eventId,
+  name: 'trial_requested',
+  client_id: context.client_id,
+  session_id: context.session_id,
+  user_id: authenticatedUser.id,
+});
+// Then call check(request); retry with the same durable IDs and content.`}</Code>
+                <p className="help">
+                  Use this form when the new evidence must affect the protected
+                  check. Resolving a proof does not consume it or authorize the
+                  action.
+                </p>
+              </details>
               <details>
                 <summary>Backend events and user relationships</summary>
                 <Code>{`// Browser: send opaque credentials to your authenticated application.
@@ -171,7 +287,43 @@ await krine.associate({
           <Loading />
         ) : null}
       </section>
-      <Providers />
+      <Providers reportWork={setProviderWork} />
+      <dialog
+        ref={dialog}
+        onCancel={(event) => {
+          event.preventDefault();
+          blocker.reset?.();
+        }}
+      >
+        <h2>
+          {credentialWork.pending
+            ? "A credential request is unconfirmed."
+            : providerWork.pending
+              ? "A provider save is unconfirmed."
+              : credentialWork.secret
+                ? "Leave without this server secret?"
+                : providerWork.dirty
+                  ? "Leave with unsaved provider changes?"
+                  : "Leave with an unfinished credential?"}
+        </h2>
+        <p>
+          {pending
+            ? "Stay here and retry the same request to recover its result. The change may already have been applied."
+            : credentialWork.secret
+              ? "Copy and save the secret before leaving. Krine cannot show it again; otherwise, revoke it and create a replacement."
+              : "Entered values are kept only in this open form. Leaving discards them."}
+        </p>
+        <div className="actions">
+          <button onClick={() => blocker.reset?.()}>
+            Stay with configuration
+          </button>
+          {!pending && (
+            <button onClick={() => blocker.proceed?.()}>
+              Discard and leave
+            </button>
+          )}
+        </div>
+      </dialog>
     </>
   );
 }

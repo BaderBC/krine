@@ -109,7 +109,7 @@ export function App() {
                 onClick={() => {
                   if (
                     window.confirm(
-                      "Sign out? Save any open draft before continuing.",
+                      "Sign out? Save open changes and copy any newly revealed secrets before continuing.",
                     )
                   )
                     void logout();

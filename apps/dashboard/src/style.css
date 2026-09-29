@@ -912,3 +912,64 @@ dialog .login-form {
   margin-bottom: 3px;
   font-size: 13px;
 }
+
+.credential-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.credential-list > li {
+  border-bottom: 1px solid #d9dece;
+  padding: 18px 0;
+  font-size: 13px;
+}
+.credential-row,
+.credential-list-toolbar,
+.credential-list-toolbar form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+.credential-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.credential-list-toolbar {
+  margin: 24px 0 12px;
+  align-items: flex-end;
+}
+.credential-list-toolbar form {
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+.credential-list-toolbar input {
+  max-width: 250px;
+}
+.credential-record {
+  border: 0;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.credential-record summary {
+  font-size: 12px;
+  font-weight: 400;
+  color: #686f62;
+}
+.credential-form,
+.credential-result {
+  max-width: 700px;
+  font-size: 13px;
+  padding: 12px 0;
+}
+.credential-result h3 {
+  margin-top: 0;
+}
+.credential-result .actions {
+  margin-top: 14px;
+}
+.credential-result input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}

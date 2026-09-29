@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import {
-  useBeforeUnload,
-  useBlocker,
-  useLocation,
-  useSearchParams,
-} from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { InvestigationLink as Link } from "./navigation";
 import { encode } from "./api";
 import { actionLabel, conditionLabel } from "./policy";
 import { ProviderForm } from "./provider-form";
 import { Loading, ResourceError, Time, useResource } from "./shared";
 import type { Condition, Provider, Rule } from "./types";
+import type { SettingsWork } from "./Credentials";
 
 function usesIntelligence(condition: Condition): boolean {
   if (condition.op === "all" || condition.op === "any")
@@ -437,7 +433,11 @@ function ProviderPanel({
   );
 }
 
-export function Providers() {
+export function Providers({
+  reportWork,
+}: {
+  reportWork: (state: SettingsWork) => void;
+}) {
   const resource = useResource<{ items: Provider[] }>("/providers");
   const [params] = useSearchParams();
   const location = useLocation();
@@ -461,22 +461,9 @@ export function Providers() {
   );
   const dirty = Object.values(forms).some((form) => form.dirty);
   const pending = Object.values(forms).some((form) => form.pending);
-  const blocker = useBlocker(
-    ({ nextLocation }) => dirty && nextLocation.pathname !== "/settings",
-  );
-  const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (blocker.state === "blocked" && !dialog.current?.open)
-      dialog.current?.showModal();
-    else if (blocker.state !== "blocked" && dialog.current?.open)
-      dialog.current.close();
-  }, [blocker.state]);
-  useBeforeUnload((event) => {
-    if (dirty) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-  });
+    reportWork({ dirty, pending });
+  }, [dirty, pending, reportWork]);
   return (
     <section ref={section} id="providers">
       <h2>Providers</h2>
@@ -493,34 +480,6 @@ export function Providers() {
       ) : resource.loading ? (
         <Loading />
       ) : null}
-      <dialog
-        ref={dialog}
-        onCancel={(event) => {
-          event.preventDefault();
-          blocker.reset?.();
-        }}
-      >
-        <h2>
-          {pending
-            ? "A provider save is unconfirmed."
-            : "Leave with unsaved provider changes?"}
-        </h2>
-        <p>
-          {pending
-            ? "Stay here and retry the same save to recover its result. The change may already have been applied."
-            : "Entered values and test results are kept only in this open form. Leaving discards them."}
-        </p>
-        <div className="actions">
-          <button onClick={() => blocker.reset?.()}>
-            Stay with configuration
-          </button>
-          {!pending && (
-            <button onClick={() => blocker.proceed?.()}>
-              Discard and leave
-            </button>
-          )}
-        </div>
-      </dialog>
     </section>
   );
 }

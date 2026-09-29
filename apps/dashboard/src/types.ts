@@ -66,7 +66,8 @@ export interface Metric {
   examples: string[];
 }
 export type Observation =
-  { status: "known"; value: Scalar } | { status: "unknown"; reason: string };
+  | { status: "known"; value: Scalar }
+  | { status: "unknown"; reason: string };
 export interface MetricObservation {
   version: number;
   state: Observation;
@@ -161,7 +162,9 @@ export interface Entity {
   recent_events: Event[];
 }
 export interface Setup {
-  public_key: string;
+  public_key: string | null;
+  browser_credential_id: string | null;
+  active_credentials: { browser: number; server: number };
   browser_url: string;
   server_url: string;
   allowed_origins: string[];
@@ -180,4 +183,20 @@ export interface Provider {
   dependent_checks: string[];
   dependent_versions: { check: string; version: number }[];
   dependents_token: string;
+}
+
+export interface Credential {
+  id: string;
+  kind: "browser" | "server";
+  label: string;
+  source: "bootstrap" | "administrator";
+  public_key: string | null;
+  created_at: number;
+  revoked_at: number | null;
+  revoked_by: "administrator" | null;
+}
+export interface CredentialCreation {
+  credential: Credential;
+  secret: string | null;
+  secret_status: "revealed" | "unrecoverable" | "not_applicable";
 }

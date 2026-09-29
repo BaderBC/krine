@@ -72,6 +72,8 @@ beforeEach(() => {
   });
   vi.spyOn(api, "get").mockImplementation(
     async <T,>(path: string): Promise<T> => {
+      if (path.startsWith("/credentials?"))
+        return { items: [], next_cursor: null } as T;
       if (path === "/providers")
         return { items: [structuredClone(current)] } as T;
       if (path === "/setup")
@@ -79,8 +81,13 @@ beforeEach(() => {
           browser_url: "https://krine.example",
           server_url: "https://krine.example",
           public_key: "pk_public",
+          browser_credential_id: "cred_browser",
+          active_credentials: { browser: 1, server: 1 },
           allowed_origins: ["https://app.example"],
-          sdk: {},
+          sdk: {
+            browser_package: "@krine/browser",
+            server_package: "@krine/server",
+          },
         } as T;
       if (path === "/checks/can_claim/versions/3") return version as T;
       throw new Error(`Unexpected ${path}`);
