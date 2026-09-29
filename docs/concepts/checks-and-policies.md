@@ -105,4 +105,4 @@ For browser-originated protected actions, the backend performs the authoritative
 
 The browser does not decide whether an action is allowed.
 
-The exact network protocol remains intentionally unspecified until implementation design.
+The [HTTP protocol](../engineering/protocol.md) and [SDK guide](../engineering/sdks.md) define the implemented integration contract.

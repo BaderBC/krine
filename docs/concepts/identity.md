@@ -34,7 +34,7 @@ client_x → user_123
 
 and enrich the user with backend-known metadata such as email or phone where product requirements justify it.
 
-The exact SDK/protocol shape is an engineering decision.
+The [SDK guide](../engineering/sdks.md#events-and-identity) defines context resolution and authoritative association requests.
 
 ## MVP relationship scope
 
@@ -69,4 +69,4 @@ For protected browser actions:
 
 Retries may recover the same attempt, and verified challenge completion may continue it. A consumed proof cannot start another attempt. Proof expiry does not erase an already-recorded result within the supported retry window.
 
-These are implementation defaults that can evolve explicitly. Engineers choose the wire format, bounded challenge-continuation lifetime and retry window as part of implementation. See [ADR 0007](../decisions/0007-mvp-contract-defaults.md) and [reliability](../engineering/reliability.md).
+The [HTTP protocol](../engineering/protocol.md) defines the wire format, bounded challenge lifetime and retry window. These contracts implement [ADR 0007](../decisions/0007-mvp-contract-defaults.md) and the [reliability guarantees](../engineering/reliability.md); changes must preserve explicit recovery semantics.
