@@ -63,7 +63,7 @@ Logical areas include:
 
 - event ingestion;
 - identity and relationships;
-- metrics;
+- metrics and the built-in catalog compiled into [`krine-core`](docs/engineering/storage.md#metric-catalog);
 - provider integrations;
 - checks / policy evaluation;
 - decisions and explanations;
@@ -86,7 +86,6 @@ See the [information architecture](docs/product/information-architecture.md), [c
 Durable control-plane and relational configuration, such as:
 
 - policy/check definitions;
-- metric definitions;
 - provider configuration;
 - identity relationships;
 - durable settings.
