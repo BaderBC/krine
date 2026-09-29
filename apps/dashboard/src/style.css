@@ -72,7 +72,7 @@ button:disabled {
 input,
 select,
 textarea {
-  border: 1px solid #c6c9c1;
+  border: 1px solid #7f8776;
   border-radius: 4px;
   background: #fff;
   min-height: 38px;
@@ -157,7 +157,7 @@ p {
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 0;
-  color: #72786f;
+  color: #686f62;
   max-width: 190px;
   overflow-wrap: anywhere;
 }
@@ -224,7 +224,7 @@ main {
   padding: 22px 40px;
   margin: 0 auto;
   border-top: 1px solid #e3e5dd;
-  color: #797e73;
+  color: #686f62;
   font-size: 11px;
 }
 .intro {
@@ -316,7 +316,7 @@ table {
 th {
   font-size: 11px;
   font-weight: 500;
-  color: #727769;
+  color: #686f62;
   padding: 12px 14px 12px 0;
   border-bottom: 1px solid #cdd1c6;
 }
@@ -400,7 +400,7 @@ th:first-child:nth-last-child(3) {
   border-bottom: 1px solid #d9dece;
 }
 .rules > li::marker {
-  color: #738067;
+  color: #686f62;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -473,7 +473,7 @@ th:first-child:nth-last-child(3) {
 }
 .condition-group legend {
   font-size: 11px;
-  color: #6c7961;
+  color: #686f62;
   padding: 0 7px;
 }
 .condition-group > label {
@@ -551,7 +551,7 @@ h2[id] {
   padding: 0;
 }
 .version-list time {
-  color: #727866;
+  color: #686f62;
   font-size: 12px;
 }
 .view-switch {
