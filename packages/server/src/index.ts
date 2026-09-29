@@ -3,12 +3,12 @@ import {
   parseEvaluation, record, string, timestamp, validateCheckRequest,
 } from '@krine/protocol';
 import type {
-  Association, AssociationRequest, AvailabilityReason, CheckRequest, ContextCredentials, Evaluation, EventReceipt,
+  Association, AssociationRequest, AvailabilityReason, CheckRequest, ContextResolutionRequest, Evaluation, EventReceipt,
   EventRequest, ResolvedContext, TransportOptions, Verification,
 } from '@krine/protocol';
 
 export { AvailabilityError, HttpError, KrineError } from '@krine/protocol';
-export type { Association, AssociationRequest, Challenge, CheckRequest, ContextCredentials, Evaluation, EventReceipt, EventRequest, ResolvedContext, Verification } from '@krine/protocol';
+export type { Association, AssociationRequest, Challenge, CheckRequest, ContextCredentials, ContextResolutionRequest, Evaluation, EventReceipt, EventRequest, ResolvedContext, Verification } from '@krine/protocol';
 
 export type FallbackOutcome = 'ALLOW' | 'DENY';
 
@@ -55,9 +55,15 @@ export class KrineServer {
     this.transport = new Transport(options, { Authorization: `Bearer ${options.secretKey}` });
   }
 
-  /** Resolve existing Krine participation credentials; this neither asserts user identity nor applies fallback. */
-  async resolveContext(credentials: ContextCredentials): Promise<ResolvedContext> {
-    if (!record(credentials) || !exactKeys(credentials, ['client_token', 'session_token'])
+  /** Resolve participation; bind interaction evidence to its proof when supplied. Never authorizes or falls back. */
+  async resolveContext(request: ContextResolutionRequest): Promise<ResolvedContext> {
+    const credentials: unknown = request;
+    if (!record(credentials)) invalidInput();
+    if (Object.hasOwn(credentials, 'interaction')) {
+      if (!exactKeys(credentials, ['interaction']) || !record(credentials.interaction)
+        || !exactKeys(credentials.interaction, ['proof', 'check', 'ip']) || !string(credentials.interaction.proof, 4096)
+        || !identifier(credentials.interaction.check) || !ipAddress(credentials.interaction.ip)) invalidInput();
+    } else if (!exactKeys(credentials, ['client_token', 'session_token'])
       || !string(credentials.client_token, 4096) || !string(credentials.session_token, 4096)) invalidInput();
     const result = await this.transport.post('/v1/contexts/resolve', jsonBody(credentials));
     if (!record(result) || !identifier(result.client_id) || !identifier(result.session_id)

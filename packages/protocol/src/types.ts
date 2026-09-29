@@ -17,6 +17,10 @@ export interface ContextCredentials {
   session_token: string;
 }
 
+/** Resolve continuous participation credentials, or the context of an exact protected interaction. */
+export type ContextResolutionRequest = (ContextCredentials & { interaction?: never })
+  | { interaction: { proof: string; check: string; ip: string }; client_token?: never; session_token?: never };
+
 export interface ResolvedContext {
   client_id: string;
   session_id: string;

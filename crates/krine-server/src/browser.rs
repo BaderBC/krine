@@ -268,25 +268,76 @@ fn invalid_context() -> ApiError {
     )
 }
 #[derive(Deserialize)]
+#[serde(untagged)]
+pub enum ResolveRequest {
+    Credentials(ResolveCredentials),
+    Interaction(ResolveProofRequest),
+}
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ResolveRequest {
+pub struct ResolveCredentials {
     client_token: String,
     session_token: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveProofRequest {
+    interaction: ResolveInteraction,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveInteraction {
+    proof: String,
+    check: String,
+    ip: String,
 }
 pub async fn resolve(
     State(app): State<App>,
     StrictJson(input): StrictJson<ResolveRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    let client = load(&app, "client", &input.client_token)
-        .await?
-        .ok_or_else(invalid_context)?;
-    let session = load(&app, "session", &input.session_token)
-        .await?
-        .filter(|s| s.client_id == client.client_id)
-        .ok_or_else(invalid_context)?;
-    Ok(Json(
-        json!({"client_id":client.client_id,"session_id":session.session_id.ok_or_else(invalid_context)?,"expires_at":session.expires_at}),
-    ))
+    match input {
+        ResolveRequest::Credentials(input) => {
+            let client = load(&app, "client", &input.client_token)
+                .await?
+                .ok_or_else(invalid_context)?;
+            let session = load(&app, "session", &input.session_token)
+                .await?
+                .filter(|s| s.client_id == client.client_id)
+                .ok_or_else(invalid_context)?;
+            Ok(Json(
+                json!({"client_id":client.client_id,"session_id":session.session_id.ok_or_else(invalid_context)?,"expires_at":session.expires_at}),
+            ))
+        }
+        ResolveRequest::Interaction(ResolveProofRequest { interaction }) => {
+            util::identifier(&interaction.check)?;
+            let ip = util::ip(&interaction.ip)?.to_string();
+            if interaction.proof.is_empty() || interaction.proof.len() > 128 {
+                return Err(invalid_interaction());
+            }
+            let encoded: Option<String> = app
+                .redis
+                .clone()
+                .get(format!("krine:proof:{}", util::digest(&interaction.proof)))
+                .await?;
+            let proof: Proof = serde_json::from_str(&encoded.ok_or_else(invalid_interaction)?)
+                .map_err(|_| ApiError::unavailable())?;
+            if proof.expires_at <= util::now() || proof.check != interaction.check || proof.ip != ip
+            {
+                return Err(invalid_interaction());
+            }
+            Ok(Json(
+                json!({"client_id":proof.client_id,"session_id":proof.session_id,"expires_at":proof.expires_at}),
+            ))
+        }
+    }
+}
+
+fn invalid_interaction() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_proof",
+        "The proof is invalid, expired, or bound to another action or IP.",
+    )
 }
 
 async fn observe_ip(

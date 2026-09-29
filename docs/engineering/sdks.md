@@ -60,6 +60,22 @@ const result = await krine.check({
 
 Before calling Krine, persist one immutable request per business intent. Generate the operation ID once; reuse it across transport retries, local fallback, process restarts and verification. Derive IP using the application's trusted proxy configuration. Select the check, authenticated user and sensitive inputs on the backend. Store the original proof and IP; do not replace them during recovery. Reject browser requests that try to change the saved action's immutable content.
 
+Before submitting pre-check associations or events, bind their context to that saved action:
+
+```ts
+const context = await krine.resolveContext({
+  interaction: {
+    proof: savedAttempt.originalProof,
+    check: 'can_register',
+    ip: savedAttempt.originalIp,
+  },
+});
+// Persist the resolution and authoritative event/association inputs before sending them.
+// Use context.client_id and context.session_id, never browser-asserted IDs.
+```
+
+This read-only mode derives context directly from the issued proof; it rejects mixed credential/interaction envelopes and browser-selected IDs. No separate credential pair is needed, so context renewal cannot accidentally mix two sessions. A still-valid proof remains resolvable after its participation credentials expire. It does not consume the proof or authorize the action. Resolution errors never apply availability fallback. An interrupted application resumes its saved resolution/event progress; it does not resolve an already accepted attempt again after the proof's initial acceptance window.
+
 A result has `source: 'evaluation'` or `source: 'fallback'`. Evaluated outcomes are `ALLOW`, `DENY` or `CHALLENGE_REQUIRED`. Only final Allow permits the protected action. A fallback result has no decision ID or policy version; it identifies the configured Allow/Deny and its availability reason. Record fallback separately from an evaluated decision.
 
 Krine recovery does not deduplicate the application's protected action. Use a durable application record and a transaction or equivalent operation-specific guard to ensure one business effect, including after fallback Allow. Atomically associate the business result with the operation ID where possible. Subsequent retries return that stored business result. Stop recovery at the evaluated `retry_until`; if the first result is unknown, limit recovery to 24 hours after the first attempt.
@@ -121,7 +137,7 @@ await fetch('/api/session/krine-context', {
 });
 ```
 
-In that application handler, authenticate the user and validate CSRF before resolving the supplied credentials with the server SDK:
+In that continuous-session handler, authenticate the user and validate CSRF before resolving the supplied credentials with the server SDK. This credential-only mode does not bind a separately supplied action proof; use the interaction mode above for pre-check evidence:
 
 ```ts
 // Backend: requestBody comes from the bounded, decoded request body.

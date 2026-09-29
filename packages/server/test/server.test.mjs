@@ -132,3 +132,34 @@ test('context resolution never fabricates an identity or fallback on errors', as
   }
   await assert.rejects(sdk(async () => { throw Error('offline'); }).resolveContext(credentials), AvailabilityError);
 });
+
+test('proof-bound context resolution validates and preserves the full interaction without fallback', async () => {
+  const input = { interaction: { proof: 'proof_secret', check: 'can_claim_trial', ip: '::ffff:127.0.0.1' } };
+  const resolved = { client_id: 'cli_1', session_id: 'ses_1', expires_at: now + 60_000 };
+  let calls = 0;
+  const client = sdk(async (url, init) => {
+    calls++; assert.equal(url, 'https://krine.example/v1/contexts/resolve');
+    assert.deepEqual(JSON.parse(init.body), input); return json(resolved);
+  });
+  assert.deepEqual(await client.resolveContext(input), resolved);
+  for (const interaction of [null, {}, { proof: 'p', check: 'c' }, { ...input.interaction, proof: '' },
+    { ...input.interaction, check: 'invalid check' }, { ...input.interaction, ip: '127.1' },
+    { ...input.interaction, client_id: 'attacker_selected' }]) {
+    await assert.rejects(client.resolveContext({ ...input, interaction }), error => error.code === 'invalid_input');
+  }
+  await assert.rejects(client.resolveContext({ ...input, client_token: 'client_secret', session_token: 'session_secret' }), error => error.code === 'invalid_input');
+  assert.equal(calls, 1);
+  for (const [status, code] of [[422, 'invalid_proof'], [422, 'invalid_context'], [401, 'unauthenticated'], [503, 'unavailable']]) {
+    await assert.rejects(sdk(async () => json({ error: { code } }, status)).resolveContext(input), error => error instanceof KrineError);
+  }
+  const mutable = structuredClone(input);
+  const serialized = [];
+  const retrying = sdk(async (_url, init) => {
+    serialized.push(init.body);
+    if (serialized.length === 1) { mutable.interaction.proof = 'changed'; throw Error('offline'); }
+    return json(resolved);
+  }, { retries: 1 });
+  assert.deepEqual(await retrying.resolveContext(mutable), resolved);
+  assert.equal(serialized.length, 2); assert.equal(serialized[0], serialized[1]);
+  assert.equal(JSON.parse(serialized[1]).interaction.proof, input.interaction.proof);
+});

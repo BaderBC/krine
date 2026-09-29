@@ -16,13 +16,16 @@ struct Runtime {
     url: String,
     http: Client,
     server: tokio::task::JoinHandle<()>,
-    worker: tokio::task::JoinHandle<()>,
+    worker: Option<tokio::task::JoinHandle<()>>,
     shutdown: tokio::sync::watch::Sender<bool>,
     cookie: String,
     csrf: String,
 }
 impl Runtime {
     async fn start() -> Self {
+        Self::start_with_worker(true).await
+    }
+    async fn start_with_worker(run_worker: bool) -> Self {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::WARN)
             .try_init();
@@ -43,7 +46,7 @@ impl Runtime {
             .unwrap();
         });
         let (shutdown, rx) = tokio::sync::watch::channel(false);
-        let worker = tokio::spawn(krine_server::worker(app.clone(), rx));
+        let worker = run_worker.then(|| tokio::spawn(krine_server::worker(app.clone(), rx)));
         let http = Client::builder()
             .timeout(Duration::from_secs(12))
             .build()
@@ -134,7 +137,9 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         let _ = self.shutdown.send(true);
         self.server.abort();
-        self.worker.abort();
+        if let Some(worker) = &self.worker {
+            worker.abort();
+        }
     }
 }
 fn unique() -> String {
@@ -156,6 +161,160 @@ async fn error(builder: RequestBuilder, status: StatusCode, code: &str) {
 }
 fn request(operation: &str, check: &str, proof: &Value) -> Value {
     json!({"operation_id":operation,"check":check,"proof":proof["proof"],"ip":"127.0.0.1"})
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, Valkey, ClickHouse and KRINE_* configuration"]
+async fn proof_bound_context_resolution_rejects_cross_context_action_and_ip() {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+
+    let r = Runtime::start_with_worker(false).await;
+    let check = unique();
+    r.create(
+        &check,
+        json!({"schema_version":1,"inputs":{},"rules":[],"otherwise":"ALLOW"}),
+    )
+    .await;
+    let context = r.context().await;
+    let other_client = r.context().await;
+    let other_session = ok(r
+        .browser("/v1/browser/context")
+        .json(&json!({"client_token":context["client_token"]})))
+    .await;
+    let proof = r.proof(&context, &check).await;
+    let input =
+        json!({"interaction":{"proof":proof["proof"],"check":check,"ip":"::ffff:127.0.0.1"}});
+    for _ in 0..2 {
+        let resolved = ok(r.server("/v1/contexts/resolve").json(&input)).await;
+        assert_eq!(resolved["client_id"], context["client_id"]);
+        assert_eq!(resolved["session_id"], context["session_id"]);
+        assert_eq!(resolved["expires_at"], proof["expires_at"]);
+        assert_eq!(resolved.as_object().unwrap().len(), 3);
+    }
+    error(
+        r.browser("/v1/contexts/resolve").json(&input),
+        StatusCode::UNAUTHORIZED,
+        "unauthenticated",
+    )
+    .await;
+    for other in [&other_client, &other_session] {
+        let mut bad = input.clone();
+        bad["client_token"] = other["client_token"].clone();
+        bad["session_token"] = other["session_token"].clone();
+        error(
+            r.server("/v1/contexts/resolve").json(&bad),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_input",
+        )
+        .await;
+    }
+    for (field, value) in [
+        ("check", json!("another_check")),
+        ("ip", json!("203.0.113.8")),
+        ("proof", json!("missing_proof")),
+        ("proof", json!("")),
+        ("proof", json!("p".repeat(129))),
+    ] {
+        let mut bad = input.clone();
+        bad["interaction"][field] = value;
+        error(
+            r.server("/v1/contexts/resolve").json(&bad),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_proof",
+        )
+        .await;
+    }
+    for interaction in [
+        Value::Null,
+        json!({}),
+        json!({"proof":proof["proof"],"check":check,"ip":"not-an-ip"}),
+        json!({"proof":proof["proof"],"check":check,"ip":"127.0.0.1","client_id":context["client_id"]}),
+    ] {
+        let mut bad = input.clone();
+        bad["interaction"] = interaction;
+        error(
+            r.server("/v1/contexts/resolve").json(&bad),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_input",
+        )
+        .await;
+    }
+    let other_proof = r.proof(&other_client, &check).await;
+    let other_resolved = ok(r.server("/v1/contexts/resolve").json(
+        &json!({"interaction":{"proof":other_proof["proof"],"check":check,"ip":"127.0.0.1"}}),
+    ))
+    .await;
+    assert_eq!(other_resolved["client_id"], other_client["client_id"]);
+    assert_ne!(other_resolved["client_id"], context["client_id"]);
+    // Issued proof validity does not depend on later participation-token expiry.
+    for (kind, token) in [
+        ("client", &context["client_token"]),
+        ("session", &context["session_token"]),
+    ] {
+        let key = format!(
+            "krine:{kind}:{}",
+            URL_SAFE_NO_PAD.encode(Sha256::digest(token.as_str().unwrap()))
+        );
+        let encoded: String = r.app.redis.clone().get(&key).await.unwrap();
+        let mut expired: Value = serde_json::from_str(&encoded).unwrap();
+        expired["expires_at"] = json!(1);
+        let _: () = r
+            .app
+            .redis
+            .clone()
+            .set_options(
+                &key,
+                expired.to_string(),
+                redis::SetOptions::default().with_expiration(redis::SetExpiry::EX(60)),
+            )
+            .await
+            .unwrap();
+    }
+    error(r.server("/v1/contexts/resolve").json(&json!({"client_token":context["client_token"],"session_token":context["session_token"]})), StatusCode::UNPROCESSABLE_ENTITY, "invalid_context").await;
+    let still_valid = ok(r.server("/v1/contexts/resolve").json(&input)).await;
+    assert_eq!(still_valid["client_id"], context["client_id"]);
+    assert_eq!(still_valid["session_id"], context["session_id"]);
+    // Read-only resolution did not consume the proof or create an accepted operation.
+    let accepted = ok(r
+        .server("/v1/checks/evaluate")
+        .json(&request(&unique(), &check, &proof)))
+    .await;
+    assert_eq!(accepted["outcome"], "ALLOW");
+    let key = format!(
+        "krine:proof:{}",
+        URL_SAFE_NO_PAD.encode(Sha256::digest(proof["proof"].as_str().unwrap()))
+    );
+    let encoded: String = r.app.redis.clone().get(&key).await.unwrap();
+    let mut expired: Value = serde_json::from_str(&encoded).unwrap();
+    expired["expires_at"] = json!(1);
+    let _: () = r
+        .app
+        .redis
+        .clone()
+        .set_options(
+            &key,
+            expired.to_string(),
+            redis::SetOptions::default().with_expiration(redis::SetExpiry::EX(60)),
+        )
+        .await
+        .unwrap();
+    error(
+        r.server("/v1/contexts/resolve").json(&input),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_proof",
+    )
+    .await;
+    let _: () = r.app.redis.clone().del(&key).await.unwrap();
+    error(
+        r.server("/v1/contexts/resolve").json(&input),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_proof",
+    )
+    .await;
+    let credentials = json!({"client_token":other_client["client_token"],"session_token":other_client["session_token"]});
+    let continuous = ok(r.server("/v1/contexts/resolve").json(&credentials)).await;
+    assert_eq!(continuous["session_id"], other_client["session_id"]);
 }
 
 #[tokio::test]
