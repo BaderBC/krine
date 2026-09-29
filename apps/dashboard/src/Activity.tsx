@@ -1,7 +1,16 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  checkUrl,
+  eventPath,
+  eventUrl,
+  entityPath,
+  entityUrl,
+  useAddressedParam,
+} from "./addresses";
 import { encode } from "./api";
+import { CapturedRelationships, Relationships } from "./Relationships";
 import {
   InvestigationLink as Link,
   ActivityReturn,
@@ -15,6 +24,7 @@ import {
   Identifiers,
   JsonDetails,
   Loading,
+  Notice,
   ResourceError,
   PageTitle,
   Pagination,
@@ -64,10 +74,7 @@ export function DecisionRows({ items }: { items: Decision[] }) {
                 </Link>
               </td>
               <td>
-                <Link
-                  className="identifier"
-                  to={`/checks/${encode(decision.check)}`}
-                >
+                <Link className="identifier" to={checkUrl(decision.check)}>
                   {decision.check}
                 </Link>
               </td>
@@ -111,10 +118,7 @@ export function EventRows({ items }: { items: Event[] }) {
                 <Time at={event.accepted_at} />
               </td>
               <td>
-                <Link
-                  className="identifier"
-                  to={`/activity/events/${encode(event.event_id)}`}
-                >
+                <Link className="identifier" to={eventUrl(event.event_id)}>
                   {event.name}
                 </Link>
               </td>
@@ -142,6 +146,23 @@ export function Activity() {
   const navigate = useNavigate();
   const events = params.get("view") === "events";
   const origin = useActivityOrigin();
+  const entityKind =
+    params.has("entity") &&
+    ["client", "session", "user", "ip"].includes(
+      params.get("entity_kind") ?? "",
+    )
+      ? params.get("entity_kind")
+      : null;
+  function viewUrl(view: "events" | "decisions") {
+    const next = new URLSearchParams(params);
+    next.set("view", view);
+    next.delete("cursor");
+    for (const key of view === "events"
+      ? ["check", "operation_id", "outcome"]
+      : ["name"])
+      next.delete(key);
+    return `/activity?${next}`;
+  }
   const defaultFrom = useMemo(() => Date.now() - 86_400_000, []);
   useEffect(() => {
     if (params.has("from") || params.get("range") === "all") return;
@@ -168,6 +189,7 @@ export function Activity() {
     const value = params.get(key);
     if (value) query.set(key, value);
   }
+  if (entityKind) query.set("entity_kind", entityKind);
   if (!query.has("from") && params.get("range") !== "all")
     query.set("from", String(defaultFrom));
   const resource = useResource<Page<Decision | Event>>(
@@ -175,8 +197,8 @@ export function Activity() {
   );
   useActivityScroll(Boolean(resource.data));
   const searchKey =
-    ["check", "operation_id", "entity", "name"].find((key) =>
-      params.has(key),
+    ["check", "operation_id", "entity", "name"].find(
+      (key) => params.has(key) && !(key === "entity" && entityKind),
     ) ?? (events ? "name" : "check");
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,14 +210,21 @@ export function Activity() {
     if (key === "record" && value) {
       rememberActivityPosition(origin);
       navigate(
-        `/activity/${events ? "events" : "decisions"}/${encode(value)}${origin ? `?return_to=${encode(origin)}` : ""}`,
+        `${events ? eventUrl(value) : `/activity/decisions/${encode(value)}`}${origin ? `${events ? "&" : "?"}return_to=${encode(origin)}` : ""}`,
       );
       return;
+    }
+    if (entityKind && (key !== "entity" || value === params.get("entity"))) {
+      next.set("entity", params.get("entity")!);
+      next.set("entity_kind", entityKind);
     }
     if (value) next.set(key, value);
     const range = String(form.get("range"));
     next.set("range", range);
-    if (range !== "all")
+    if (range === (params.get("range") ?? "24")) {
+      for (const key of ["from", "to"])
+        if (params.has(key)) next.set(key, params.get(key)!);
+    } else if (range !== "all")
       next.set("from", String(Date.now() - Number(range) * 3_600_000));
     const outcome = String(form.get("outcome") ?? "");
     if (outcome && !events) next.set("outcome", outcome);
@@ -216,14 +245,11 @@ export function Activity() {
       <nav className="view-switch" aria-label="Activity view">
         <Link
           aria-current={!events ? "page" : undefined}
-          to="/activity?view=decisions"
+          to={viewUrl("decisions")}
         >
           Decisions
         </Link>
-        <Link
-          aria-current={events ? "page" : undefined}
-          to="/activity?view=events"
-        >
+        <Link aria-current={events ? "page" : undefined} to={viewUrl("events")}>
           Events
         </Link>
       </nav>
@@ -281,22 +307,34 @@ export function Activity() {
         )}
         <button type="submit">Find</button>
       </form>
-      {params.has("entity") && (
+      {entityKind ? (
         <p className="help">
-          Open entity:{" "}
-          <Link to={`/entities/client/${encode(params.get("entity")!)}`}>
-            Client
-          </Link>{" "}
-          ·{" "}
-          <Link to={`/entities/user/${encode(params.get("entity")!)}`}>
-            User
-          </Link>{" "}
-          · <Link to={`/entities/ip/${encode(params.get("entity")!)}`}>IP</Link>{" "}
-          ·{" "}
-          <Link to={`/entities/session/${encode(params.get("entity")!)}`}>
-            Session
+          Scoped to {entityKind === "ip" ? "IP" : entityKind}:{" "}
+          <EntityLink kind={entityKind} id={params.get("entity")} /> ·{" "}
+          <Link
+            to={(() => {
+              const next = new URLSearchParams(params);
+              next.delete("entity");
+              next.delete("entity_kind");
+              next.delete("cursor");
+              return `/activity?${next}`;
+            })()}
+          >
+            Clear entity scope
           </Link>
         </p>
+      ) : (
+        params.has("entity") && (
+          <p className="help">
+            Open entity:{" "}
+            <Link to={entityUrl("client", params.get("entity")!)}>Client</Link>{" "}
+            · <Link to={entityUrl("user", params.get("entity")!)}>User</Link> ·{" "}
+            <Link to={entityUrl("ip", params.get("entity")!)}>IP</Link> ·{" "}
+            <Link to={entityUrl("session", params.get("entity")!)}>
+              Session
+            </Link>
+          </p>
+        )
       )}
       <ResourceError resource={resource} />
       {resource.refreshed && (
@@ -346,9 +384,9 @@ export function Activity() {
         <Loading />
       ) : null}
       <p className="help footnote">
-        Activity shows records Krine received and retained. An unreachable SDK
-        may be unable to report a local fallback; an absent record does not
-        prove no action occurred.
+        Activity shows records Krine received and retained. Your application
+        must record local SDK fallback; the SDK does not report it
+        automatically. An absent record does not prove no action occurred.
       </p>
     </>
   );
@@ -592,7 +630,7 @@ export function DecisionPage() {
             title={`${record.check} → ${resultLabel(record)}`}
             eyebrow={<ActivityReturn />}
           >
-            <Link to={`/checks/${encode(record.check)}?view=draft`}>
+            <Link to={`${checkUrl(record.check)}&view=draft`}>
               Edit current policy
             </Link>
           </PageTitle>
@@ -607,7 +645,7 @@ export function DecisionPage() {
                 {" "}
                 ·{" "}
                 <Link
-                  to={`/checks/${encode(record.check)}?version=${record.policy_version}`}
+                  to={`${checkUrl(record.check)}&version=${record.policy_version}`}
                 >
                   Policy v{record.policy_version}
                 </Link>
@@ -688,13 +726,7 @@ export function DecisionPage() {
                   value={record.snapshot.inputs}
                 />
               )}
-              {record.relationship_ids &&
-                record.relationship_ids.length > 0 && (
-                  <p className="help">
-                    Relationship references:{" "}
-                    {record.relationship_ids.join(", ")}
-                  </p>
-                )}
+              <CapturedRelationships record={record} />
             </details>
           )}
           <details>
@@ -739,11 +771,12 @@ export function DecisionPage() {
 }
 
 export function EventPage() {
-  const { id = "" } = useParams();
-  const resource = useResource<Event>(`/activity/events/${encode(id)}`);
+  const id = useAddressedParam("id");
+  const resource = useResource<Event>(id ? eventPath(id) : null);
   const record = resource.data;
   return (
     <>
+      {!id && <Notice>Provide one event ID in the address.</Notice>}
       <ResourceError resource={resource} />
       {record ? (
         <>
@@ -781,11 +814,104 @@ export function EventPage() {
   );
 }
 
+function recordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+const recordedTime = (value: unknown) =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+const recordedIdentifier = (value: unknown) =>
+  typeof value === "string" && value.length > 0;
+const nullableIdentifier = (value: unknown) =>
+  value === null || recordedIdentifier(value);
+
+function validEntityMetric(value: unknown): boolean {
+  if (
+    !recordObject(value) ||
+    !recordObject(value.state) ||
+    !recordObject(value.provenance)
+  )
+    return false;
+  const state = value.state;
+  return (
+    Number.isSafeInteger(value.version) &&
+    Number(value.version) > 0 &&
+    (state.status === "known"
+      ? typeof state.value === "string" ||
+        typeof state.value === "boolean" ||
+        (typeof state.value === "number" &&
+          Number.isFinite(state.value) &&
+          Math.abs(state.value) <= Number.MAX_SAFE_INTEGER)
+      : state.status === "unknown" && typeof state.reason === "string") &&
+    typeof value.provenance.source === "string" &&
+    recordedTime(value.provenance.observed_at)
+  );
+}
+function validEntityDecision(value: unknown): boolean {
+  if (!recordObject(value)) return false;
+  return (
+    recordedIdentifier(value.decision_id) &&
+    recordedIdentifier(value.operation_id) &&
+    recordedIdentifier(value.check) &&
+    typeof value.reason === "string" &&
+    (value.outcome === null || typeof value.outcome === "string") &&
+    typeof value.source === "string" &&
+    ["evaluation", "request_error", "fallback"].includes(value.source) &&
+    recordedTime(value.accepted_at) &&
+    (value.completed_at === null || recordedTime(value.completed_at)) &&
+    (value.policy_version === null ||
+      (Number.isSafeInteger(value.policy_version) &&
+        Number(value.policy_version) > 0)) &&
+    [value.client_id, value.session_id, value.user_id, value.ip].every(
+      nullableIdentifier,
+    )
+  );
+}
+function validEntityEvent(value: unknown): boolean {
+  if (!recordObject(value)) return false;
+  return (
+    recordedIdentifier(value.event_id) &&
+    recordedIdentifier(value.name) &&
+    recordedTime(value.accepted_at) &&
+    typeof value.provenance === "string" &&
+    ["backend", "browser"].includes(value.provenance) &&
+    [value.client_id, value.session_id, value.user_id, value.ip].every(
+      (id) => id === undefined || nullableIdentifier(id),
+    )
+  );
+}
+function validEntity(
+  value: unknown,
+  kind: string,
+  id: string,
+): value is Entity {
+  if (!recordObject(value)) return false;
+  return (
+    value.id === id &&
+    value.kind === kind &&
+    ["client", "session", "user", "ip"].includes(kind) &&
+    recordedTime(value.first_seen) &&
+    recordObject(value.metadata) &&
+    recordObject(value.metrics) &&
+    Object.values(value.metrics).every(validEntityMetric) &&
+    Array.isArray(value.recent_decisions) &&
+    value.recent_decisions.length <= 20 &&
+    value.recent_decisions.every(validEntityDecision) &&
+    Array.isArray(value.recent_events) &&
+    value.recent_events.length <= 20 &&
+    value.recent_events.every(validEntityEvent)
+  );
+}
+
 export function EntityPage() {
-  const { kind = "", id = "" } = useParams();
-  const [params, setParams] = useSearchParams();
+  const kind = useAddressedParam("kind");
+  const id = useAddressedParam("id");
+  const validate = useCallback(
+    (value: unknown): value is Entity => validEntity(value, kind, id),
+    [kind, id],
+  );
   const resource = useResource<Entity>(
-    `/entities/${encode(kind)}/${encode(id)}${params.has("associations_cursor") ? `?associations_cursor=${encode(params.get("associations_cursor")!)}` : ""}`,
+    kind && id ? entityPath(kind, id) : null,
+    validate,
   );
   const entity = resource.data;
   const metrics = entity
@@ -799,6 +925,9 @@ export function EntityPage() {
     : {};
   return (
     <>
+      {(!id || !kind) && (
+        <Notice>Provide one entity kind and ID in the address.</Notice>
+      )}
       <ResourceError resource={resource} />
       {entity ? (
         <>
@@ -809,7 +938,11 @@ export function EntityPage() {
               <>
                 {kind === "ip" ? "IP" : kind[0]?.toUpperCase() + kind.slice(1)}{" "}
                 ·{" "}
-                <Link to={`/activity?entity=${encode(id)}`}>View activity</Link>
+                <Link
+                  to={`/activity?entity=${encode(id)}&entity_kind=${encode(kind)}`}
+                >
+                  View activity
+                </Link>
               </>
             }
           />
@@ -826,46 +959,20 @@ export function EntityPage() {
               relationships for related context.
             </p>
           )}
-          <h2>Relationships</h2>
-          {entity.associations.length ? (
-            <ul className="relationship-list">
-              {entity.associations.map((association) => (
-                <li key={association.association_id}>
-                  <p>
-                    <EntityLink kind="client" id={association.client_id} /> →{" "}
-                    <EntityLink kind="user" id={association.user_id} />
-                  </p>
-                  <p className="help">
-                    {association.provenance === "backend"
-                      ? "Backend assertion"
-                      : association.provenance}{" "}
-                    · {association.revoked_at === null ? "Active" : "Corrected"}{" "}
-                    · Created <Time at={association.created_at} />
-                  </p>
-                  {association.revocation_reason && (
-                    <p>{association.revocation_reason}</p>
-                  )}
-                  <JsonDetails
-                    title="Relationship record"
-                    value={association}
-                  />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">No retained relationships.</p>
-          )}
-          {entity.associations_next_cursor && (
-            <button
-              onClick={() =>
-                setParams({
-                  associations_cursor: entity.associations_next_cursor!,
-                })
-              }
-            >
-              Next relationships →
-            </button>
-          )}
+        </>
+      ) : resource.loading ? (
+        <Loading />
+      ) : null}
+      {id && ["client", "session", "user", "ip"].includes(kind) && (
+        <Relationships
+          key={`${kind}:${id}`}
+          kind={kind}
+          id={id}
+          refreshEntity={resource.refresh}
+        />
+      )}
+      {entity && (
+        <>
           <h2>Recent decisions</h2>
           {entity.recent_decisions.length ? (
             <DecisionRows items={entity.recent_decisions} />
@@ -880,9 +987,7 @@ export function EntityPage() {
           )}
           <JsonDetails title="Metadata" value={entity.metadata} />
         </>
-      ) : resource.loading ? (
-        <Loading />
-      ) : null}
+      )}
     </>
   );
 }

@@ -49,8 +49,8 @@ fn table(kind: &str) -> Result<&'static str> {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
-    limit: Option<i64>,
-    cursor: Option<String>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) cursor: Option<String>,
 }
 impl Page {
     fn list(self) -> admin::List {

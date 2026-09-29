@@ -1,10 +1,11 @@
+import { checkPath } from "./addresses";
 import { ApiError, definitiveMutationFailure, errorMessage } from "./api";
 import type { Api, Mutation } from "./api";
 import type { Check, Policy, Version } from "./types";
 import { policyError, sameJson } from "./policy";
 
 type Document = { policy: Policy; description: string };
-type Intent =
+type Intent = { address?: "query" } & (
   | { kind: "save"; key: string; revision: number; document: Document }
   | {
       kind: "publish";
@@ -18,9 +19,14 @@ type Intent =
       revision: number;
       version: number;
       before: Document;
-    };
+    }
+);
 export type DraftStatus =
-  "saved" | "changed" | "saving" | "failed" | "conflict";
+  | "saved"
+  | "changed"
+  | "saving"
+  | "failed"
+  | "conflict";
 export interface DraftState extends Document {
   server: Check;
   status: DraftStatus;
@@ -135,7 +141,8 @@ function validIntent(value: unknown): value is Intent {
   if (
     typeof intent.key !== "string" ||
     !/^[a-zA-Z0-9_.:-]{1,128}$/.test(intent.key) ||
-    !integer(intent.revision)
+    !integer(intent.revision) ||
+    (intent.address !== undefined && intent.address !== "query")
   )
     return false;
   if (intent.kind === "save")
@@ -341,6 +348,7 @@ export class DraftController {
       return;
     const intent = this.intent ?? {
       kind: "save",
+      address: "query" as const,
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       document: {
@@ -355,6 +363,7 @@ export class DraftController {
       return Promise.resolve(undefined);
     return this.execute({
       kind: "publish",
+      address: "query",
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       expected_active_version: this.state.server.active_version,
@@ -364,6 +373,7 @@ export class DraftController {
     if (this.intent || this.running) return Promise.resolve(undefined);
     return this.execute({
       kind: "restore",
+      address: "query",
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       version,
@@ -377,17 +387,21 @@ export class DraftController {
     return this.intent ? this.execute(this.intent) : Promise.resolve(undefined);
   }
   private request(intent: Intent): Mutation {
-    const base = `/checks/${encodeURIComponent(this.state.server.name)}`;
+    // Missing marker denotes an already persisted legacy request: replay it unchanged.
+    const path = (suffix: string) =>
+      intent.address === "query"
+        ? checkPath(this.state.server.name, suffix)
+        : `/checks/${encodeURIComponent(this.state.server.name)}${suffix}`;
     return intent.kind === "save"
       ? {
-          path: `${base}/draft`,
+          path: path("/draft"),
           body: { revision: intent.revision, ...intent.document },
           method: "PUT",
           key: intent.key,
         }
       : intent.kind === "publish"
         ? {
-            path: `${base}/publications`,
+            path: path("/publications"),
             body: {
               revision: intent.revision,
               expected_active_version: intent.expected_active_version,
@@ -396,7 +410,7 @@ export class DraftController {
             key: intent.key,
           }
         : {
-            path: `${base}/restorations`,
+            path: path("/restorations"),
             body: {
               revision: intent.revision,
               version: intent.version,

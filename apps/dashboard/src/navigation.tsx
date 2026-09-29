@@ -14,6 +14,7 @@ function activityUrl(value: string | null): string | null {
       "operation_id",
       "outcome",
       "entity",
+      "entity_kind",
       "name",
       "from",
       "to",

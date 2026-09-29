@@ -91,6 +91,7 @@ function mount(path = "/activity/decisions/decision") {
         [
           { path: "/activity/decisions/:id", element: <DecisionPage /> },
           { path: "/entities/:kind/:id", element: <EntityPage /> },
+          { path: "/inspect/entity", element: <EntityPage /> },
         ],
         { initialEntries: [path] },
       )}

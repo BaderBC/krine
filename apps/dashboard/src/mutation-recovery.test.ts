@@ -148,3 +148,94 @@ describe("durable mutation intent before acknowledgement", () => {
     expect(run.mock.calls[2]![0]).toEqual(run.mock.calls[0]![0]);
   });
 });
+
+it.each(kinds)(
+  "preserves the exact legacy %s path, key and body after upgrade",
+  async (kind) => {
+    const key = `legacy-${kind}`;
+    const intent =
+      kind === "save"
+        ? {
+            kind,
+            key,
+            revision: 3,
+            document: { policy: allow, description: "older request" },
+          }
+        : kind === "publish"
+          ? { kind, key, revision: 3, expected_active_version: 1 }
+          : {
+              kind,
+              key,
+              revision: 3,
+              version: 2,
+              before: { policy: deny, description: "initial" },
+            };
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        check: "recovery",
+        revision: 3,
+        policy: allow,
+        description: "new local work",
+        intent,
+      }),
+    );
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(403, "csrf", "Sign in again"))
+      .mockResolvedValueOnce(committed(kind));
+    const reopened = new DraftController(
+      { run },
+      { ...initial, draft_revision: 7 },
+      sessionStorage,
+    );
+    await reopened.retryAction();
+    const expected = {
+      path: `/checks/recovery/${kind === "save" ? "draft" : kind === "publish" ? "publications" : "restorations"}`,
+      method: kind === "save" ? "PUT" : "POST",
+      key,
+      body:
+        kind === "save"
+          ? { revision: 3, policy: allow, description: "older request" }
+          : kind === "publish"
+            ? { revision: 3, expected_active_version: 1 }
+            : { revision: 3, version: 2, replace_draft: true },
+    };
+    expect(run.mock.calls[0]![0]).toEqual(expected);
+    expect(JSON.parse(sessionStorage.getItem(storageKey)!).intent).toEqual(
+      intent,
+    );
+    await reopened.retryAction();
+    expect(run.mock.calls[1]![0]).toEqual(expected);
+  },
+);
+
+it.each(kinds)(
+  "persists query addressing for a new dot-named %s before first send and keeps it across reload",
+  async (kind) => {
+    const dotCheck = { ...initial, name: ".." };
+    const run = vi.fn().mockImplementation(async () => {
+      expect(
+        JSON.parse(sessionStorage.getItem("krine:draft:..")!).intent.address,
+      ).toBe("query");
+      throw new ApiError(0, "lost", "Acknowledgement lost");
+    });
+    const model = new DraftController({ run }, dotCheck, sessionStorage);
+    await submit(model, kind);
+    const request = run.mock.calls[0]![0];
+    expect(request.path).toBe(
+      `/lookup/checks/${kind === "save" ? "draft" : kind === "publish" ? "publications" : "restorations"}?name=..`,
+    );
+    model.dispose();
+    const replay = vi
+      .fn()
+      .mockRejectedValue(new ApiError(503, "unavailable", "Retry later"));
+    const reopened = new DraftController(
+      { run: replay },
+      { ...dotCheck, draft_revision: 8 },
+      sessionStorage,
+    );
+    await reopened.retryAction();
+    expect(replay.mock.calls[0]![0]).toEqual(request);
+  },
+);

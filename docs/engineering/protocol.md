@@ -136,6 +136,32 @@ Activity `entity` search matches the identifier across client, session, user and
 
 `DecisionSummary` is `{ decision_id, operation_id, check, policy_version, outcome, reason, accepted_at, completed_at: number|null, client_id, session_id, user_id: string|null, ip, source: "evaluation" }`. Request errors and optional reported SDK fallback use separate `source: "request_error"|"fallback"` activity entries with a reason and no fabricated policy result. `DecisionDetail` adds `{ policy, snapshot, evaluation, relationship_ids, relationship_context, provider_revisions, provider_observations?, verification_transitions, requests }`. `provider_revisions` maps used capabilities to `{ revision, enabled }`; `provider_observations` records the actual normalized lookup status, safe cause and observation time. `verification_transitions` is an immutable chronological sequence `{ sequence, at, challenge_id: string|null, state, detail }`; states include `pending`, `verifying`, `passed`, `failed`, `expired` and `unavailable`. The latest Activity row represents one logical attempt throughout all steps; earlier analytical deliveries cannot overwrite newer state. `evaluation` is the core trace including every evaluated condition, explicit unknown cause and verification result. `requests` is bounded attempt metadata `{ at, kind: "initial"|"retry"|"verification", result }`, never proof/challenge bearer tokens. Browser credentials, proof tokens, provider secrets and verification tokens never appear in dashboard history.
 
+### Query-addressed identifiers
+
+Use these additive admin routes when building new clients. Values belong in
+URL-encoded query parameters so valid `.` and `..` identifiers survive browser
+path normalization. Existing path routes and response contracts remain supported.
+See [ADR 0015](../decisions/0015-query-addressed-identifiers.md).
+
+| Resource | Query-addressed route (admin prefix omitted) |
+| --- | --- |
+| Check detail | `GET /lookup/checks?name={name}` |
+| Draft save | `PUT /lookup/checks/draft?name={name}` |
+| Publication / restoration | `POST /lookup/checks/publications?name={name}`, `POST /lookup/checks/restorations?name={name}` |
+| Check versions / version | `GET /lookup/checks/versions?name={name}`, `GET /lookup/checks/versions/{version}?name={name}` |
+| Event | `GET /lookup/events?id={id}` |
+| Entity / direct relationships | `GET /lookup/entities?kind={kind}&id={id}`, `GET /lookup/entities/relationships?kind={kind}&id={id}` |
+| Relationship / audit | `GET /lookup/relationships?kind={kind}&id={id}` |
+| Relationship correction / restoration | `POST /lookup/relationships/corrections?kind={kind}&id={id}`, `POST /lookup/relationships/restorations?kind={kind}&id={id}` |
+
+List and detail routes accept the same pagination parameters as their path
+counterparts. Selectors must occur exactly once; duplicate or unknown parameters
+are invalid. Values are decoded once and retain the same domain validation:
+encoded-looking user IDs such as literal `%2e` remain distinct from `.`.
+Mutations use the existing logical target and action for idempotency, so replay
+across aliases returns the same receipt; the same key for another target conflicts.
+Persisted interrupted requests retain their exact original path, body and key.
+
 ## Retention and recovery
 
 Defaults: 30 days analytical events/decisions; 30 days since last observation for uncorrected IP segments; backend assertions and corrected/restored IP segments with their audit remain durable. Reliability envelopes and final responses survive at least the 24-hour supported retry window. Proof/challenge tombstones last at least 24 hours beyond last valid use. Unexported delivery records are never age-deleted. Each unfinished attempt reserves one delivery slot, including while its current snapshot is already exported; subsequent states coalesce into the same slot with their complete immutable transition history. Capacity exhaustion rejects new events, browser observations and attempts before acknowledging them; already accepted attempts can finish within their reserved slots. Export acknowledgements apply only to the exact revision sent. Operator retention changes cannot erase active retry or challenge state. See ADR 0009 for event projection and restart behavior.

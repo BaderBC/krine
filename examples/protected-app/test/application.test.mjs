@@ -25,7 +25,7 @@ async function fixture(t, evaluate, options = {}) {
   const calls = [];
   const proofs = new Map();
   const accepted = new Map();
-  const data = { failEvents: false, requestedEventFailures: 0, resolveError: null, eventIds: new Set(), evaluate };
+  const data = { failEvents: false, requestedEventFailures: 0, resolveError: null, associationFailures: 0, associations: new Map(), eventIds: new Set(), evaluate };
   const krine = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
@@ -46,7 +46,13 @@ async function fixture(t, evaluate, options = {}) {
       if (!proof || proof.ip !== body.interaction.ip || proof.check !== body.interaction.check) return json(res, 422, { error: { code: 'invalid_proof' } });
       return json(res, 200, { client_id: 'cli_fixture', session_id: 'ses_fixture', expires_at: now + 60_000 });
     }
-    if (req.url === '/v1/associations') return json(res, 200, { ...body, created_at: now, revoked_at: null, provenance: 'backend' });
+    if (req.url === '/v1/associations') {
+      const previous = data.associations.get(body.association_id);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(body)) return json(res, 409, { error: { code: 'input_conflict' } });
+      data.associations.set(body.association_id, body);
+      if (data.associationFailures-- > 0) return json(res, 503, { error: { code: 'dependency_unavailable' } });
+      return json(res, 200, { ...body, created_at: now, revoked_at: null, provenance: 'backend' });
+    }
     if (req.url === '/v1/events') {
       if (data.failEvents && body.name === 'trial_started') return json(res, 503, { error: { code: 'dependency_unavailable' } });
       const duplicate = data.eventIds.has(body.event_id); data.eventIds.add(body.event_id);
@@ -133,6 +139,7 @@ test('concurrent exact retries grant one durable trial, preserve original IP and
   const checked = f.calls.find(c => c.path === '/v1/checks/evaluate').body;
   assert.equal(checked.ip, '127.0.0.1'); assert.equal(checked.check, 'can_claim_trial'); assert.deepEqual(checked.inputs, {}); assert.ok(checked.user_id !== 'ada');
   assert.equal(f.calls.find(c => c.path === '/v1/associations').body.user_id, checked.user_id);
+  assert.equal(f.calls.find(c => c.path === '/v1/associations').body.session_id, 'ses_fixture');
   assert.equal(f.calls.find(c => c.path === '/v1/events').body.user_id, checked.user_id);
   for (const secret of [secretKey, input.proof, 'client_token', 'session_token']) assert.ok(!JSON.stringify(final).includes(secret));
   assert.equal((await f.api('/api/trials', { ...input, proof: 'changed' }, session)).status, 409);
@@ -501,4 +508,50 @@ test('built browser client focuses a paused verification and the saved-token pen
   saved.element('resume').focus(); saved.element('resume').click();
   await until(() => saved.dom.window.document.activeElement === saved.element('attempt-heading'));
   assert.match(saved.element('attempt-description').textContent, /response is saved/); assert.equal(saved.widgets.length, 0);
+});
+
+
+test('association session envelope is durable before a lost acknowledgement and survives restart', async t => {
+  const f = await fixture(t, (_, base) => ({ ...base, outcome: 'DENY' }));
+  const session = await f.login(); const input = await f.prepared();
+  f.data.associationFailures = 5;
+  assert.equal((await f.api('/api/trials', input, session)).status, 503);
+  const original = f.calls.find(c => c.path === '/v1/associations').body;
+  assert.equal(original.session_id, 'ses_fixture');
+  await f.stop();
+  inspect(f.dir, db => {
+    const saved = JSON.parse(db.prepare('SELECT progress FROM attempts').get().progress);
+    assert.equal(saved.association_version, 2); assert.equal(saved.associated, false);
+    assert.deepEqual(saved.association_request, original);
+  });
+  f.data.associationFailures = 0; await f.start();
+  assert.equal((await f.api('/api/trials', input, session)).status, 200);
+  for (const call of f.calls.filter(c => c.path === '/v1/associations')) assert.deepEqual(call.body, original);
+});
+
+test('upgraded legacy attempts replay their original no-session association after lost acknowledgement', async t => {
+  const f = await fixture(t, (_, base) => ({ ...base, outcome: 'DENY' }));
+  const session = await f.login(); const input = await f.prepared();
+  f.data.resolveError = error();
+  assert.equal((await f.api('/api/trials', input, session)).status, 503);
+  await f.stop();
+  let original;
+  inspect(f.dir, db => {
+    const row = db.prepare('SELECT * FROM attempts').get(); const saved = JSON.parse(row.progress);
+    delete saved.association_version; delete saved.association_request;
+    saved.context = { client_id: 'cli_fixture', session_id: 'ses_fixture', expires_at: Date.now() + 60000 };
+    db.prepare('UPDATE attempts SET progress=? WHERE id=?').run(JSON.stringify(saved), row.id);
+    original = { association_id: row.id, client_id: 'cli_fixture', user_id: row.user_id, metadata: { application: 'draftroom' } };
+    f.data.associations.set(row.id, original); // The old deployment committed, but lost its acknowledgement.
+  });
+  f.data.resolveError = null; f.data.associationFailures = 5; await f.start();
+  assert.equal((await f.api('/api/trials', input, session)).status, 503);
+  await f.stop();
+  inspect(f.dir, db => {
+    const saved = JSON.parse(db.prepare('SELECT progress FROM attempts').get().progress);
+    assert.equal(saved.association_version, 1); assert.deepEqual(saved.association_request, original);
+  });
+  f.data.associationFailures = 0; await f.start();
+  assert.equal((await f.api('/api/trials', input, session)).status, 200);
+  for (const call of f.calls.filter(c => c.path === '/v1/associations')) assert.deepEqual(call.body, original);
 });

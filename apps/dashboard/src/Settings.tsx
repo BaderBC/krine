@@ -1,8 +1,8 @@
+import { checkUrl } from "./addresses";
 import { useEffect, useRef, useState } from "react";
 import { useBeforeUnload, useBlocker, useSearchParams } from "react-router-dom";
 import { Loading, ResourceError, PageTitle, useResource } from "./shared";
 import { InvestigationLink as Link } from "./navigation";
-import { encode } from "./api";
 import { Providers } from "./Providers";
 import { Credentials } from "./Credentials";
 import type { SettingsWork } from "./Credentials";
@@ -94,7 +94,7 @@ export function Settings() {
       {params.has("check") && (
         <p className="help">
           <Link
-            to={`/checks/${encode(check)}${params.has("provider") ? "?view=draft" : ""}`}
+            to={`${checkUrl(check)}${params.has("provider") ? "&view=draft" : ""}`}
           >
             {params.has("provider")
               ? "Return to policy draft"
@@ -229,6 +229,7 @@ const context = await krine.resolveContext({
 await krine.associate({
   association_id: operation.associationId,
   client_id: context.client_id,
+  session_id: context.session_id,
   user_id: authenticatedUser.id,
 });
 await krine.event({
@@ -262,6 +263,7 @@ await krine.event({
 await krine.associate({
   association_id: association.id,
   client_id: context.client_id,
+  session_id: context.session_id,
   user_id: authenticatedUser.id,
 });`}</Code>
                 <p className="help">

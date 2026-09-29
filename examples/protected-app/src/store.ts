@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { CheckRequest, EventRequest, ResolvedContext, Verification } from '@krine/protocol';
+import type { AssociationRequest, CheckRequest, EventRequest, ResolvedContext, Verification } from '@krine/protocol';
 import type { CheckResult, PendingCheck } from '@krine/server';
 import type { PublicAttempt, TrialResult } from './contracts.js';
 
@@ -20,6 +20,8 @@ export interface Attempt {
   state: PublicAttempt['status'];
   context: ResolvedContext | null;
   associated: boolean;
+  association_version: 1 | 2;
+  association_request: AssociationRequest | null;
   event_sent: boolean;
   pending: PendingCheck | null;
   evaluation: CheckResult | null;
@@ -127,11 +129,13 @@ export class Store {
 }
 
 function progress(a: Attempt): string {
-  return JSON.stringify({ context: a.context, associated: a.associated, event_sent: a.event_sent, pending: a.pending,
+  return JSON.stringify({ context: a.context, associated: a.associated, association_version: a.association_version,
+    association_request: a.association_request, event_sent: a.event_sent, pending: a.pending,
     evaluation: a.evaluation, verification: a.verification, result: a.result, error: a.error, recovery: a.recovery });
 }
 function decode(row: Record<string, unknown> | undefined): Attempt | null {
   if (!row) return null;
-  return { ...row, request: JSON.parse(row.request as string),
+  // Attempts written before session provenance must replay their original no-session envelope.
+  return { association_version: 1, association_request: null, ...row, request: JSON.parse(row.request as string),
     ...JSON.parse(row.progress as string) } as Attempt;
 }

@@ -105,9 +105,11 @@ function mount(path: string) {
       { path: "/activity", element: <Activity /> },
       { path: "/activity/decisions/:id", element: <DecisionPage /> },
       { path: "/activity/events/:id", element: <EventPage /> },
+      { path: "/inspect/event", element: <EventPage /> },
       { path: "/metrics/:name", element: <MetricPage /> },
       { path: "/metrics", element: <Metrics /> },
       { path: "/checks/:name", element: <CheckPage /> },
+      { path: "/inspect/check", element: <CheckPage /> },
       { path: "/checks", element: <Checks /> },
       { path: "/settings", element: <Settings /> },
     ],
@@ -126,7 +128,7 @@ beforeEach(() => {
       if (path.startsWith("/activity/decisions/")) return decision as T;
       if (path.startsWith("/activity/events?"))
         return { items: [event], next_cursor: null } as T;
-      if (path.startsWith("/activity/events/")) return event as T;
+      if (path.startsWith("/lookup/events?")) return event as T;
       if (path.startsWith("/metrics/")) return metric as T;
       if (path.startsWith("/metrics?"))
         return { items: [metric], next_cursor: null } as T;

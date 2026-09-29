@@ -1,7 +1,7 @@
+import { checkUrl } from "./addresses";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { InvestigationLink as Link } from "./navigation";
-import { encode } from "./api";
 import { actionLabel, conditionLabel } from "./policy";
 import { ProviderForm } from "./provider-form";
 import { Loading, ResourceError, Time, useResource } from "./shared";
@@ -250,9 +250,7 @@ function ProviderPanel({
               <ul className="provider-dependents">
                 {state.review.checks.map(({ name, version }) => (
                   <li key={name}>
-                    <Link
-                      to={`/checks/${encode(name)}?version=${version.version}`}
-                    >
+                    <Link to={`${checkUrl(name)}&version=${version.version}`}>
                       {name} · v{version.version}
                     </Link>
                     <ul>

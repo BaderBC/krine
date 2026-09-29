@@ -1529,3 +1529,6 @@ async fn provider_review_binds_exact_dependencies_across_concurrent_publications
         }
     }
 }
+
+#[path = "addressing_integration.rs"]
+mod addressing;

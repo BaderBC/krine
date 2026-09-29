@@ -52,7 +52,8 @@ beforeEach(() => {
     async <T>(path: string): Promise<T> => {
       if (path === "/providers")
         return { items: [structuredClone(current)] } as T;
-      if (path === "/checks/can_claim/versions/3") return version as T;
+      if (path === "/lookup/checks/versions/3?name=can_claim")
+        return version as T;
       throw new Error(`Unexpected read ${path}`);
     },
   );

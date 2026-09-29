@@ -116,6 +116,7 @@ function mount(path = "/settings?check=can_claim") {
     [
       { path: "/settings", element: <Settings /> },
       { path: "/checks/:name", element: <h1>Check</h1> },
+      { path: "/inspect/check", element: <h1>Check</h1> },
     ],
     { initialEntries: [path] },
   );
