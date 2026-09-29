@@ -129,6 +129,16 @@ pub async fn evaluate(
         let provider_revisions = providers::pin(&mut tx, &policy).await?;
         let envelope = json!({"hostname":proof.hostname,"decision_id":util::token("dec_"),"operation_id":input.operation_id,"check":input.check,"policy_version":published.get::<i64,_>("version"),"accepted_at":now,"retry_until":now+86_400_000,"client_id":proof.client_id,"session_id":proof.session_id,"user_id":input.user_id,"ip":input.ip,"policy":policy,"snapshot":snapshot,"relationship_ids":relationships["items"].as_array().map(|items| items.iter().map(|item|item["id"].clone()).collect::<Vec<_>>()).unwrap_or_default(),"relationship_context":relationships,"provider_revisions":provider_revisions});
         sqlx::query("INSERT INTO operations(id,digest,proof_digest,accepted_at,retry_until,envelope) VALUES($1,$2,$3,$4,$5,$6)").bind(&input.operation_id).bind(digest).bind(proof_digest).bind(now).bind(now+86_400_000).bind(&envelope).execute(&mut *tx).await?;
+        crate::connection::observe(
+            &mut tx,
+            "check_attempt",
+            &input.check,
+            envelope["decision_id"]
+                .as_str()
+                .ok_or_else(ApiError::unavailable)?,
+            now,
+        )
+        .await?;
     }
     // Commit ownership and all evidence before evaluation. If cancellation or a
     // crash follows, an exact retry resumes this envelope without a fresh proof.
@@ -615,6 +625,7 @@ async fn record(
     let transitions=sqlx::query("SELECT sequence,at,challenge_id,state,detail FROM verification_transitions WHERE operation_id=$1 ORDER BY sequence").bind(id).fetch_all(&mut **tx).await?;
     let transitions=transitions.into_iter().map(|r|json!({"sequence":r.get::<i64,_>("sequence"),"at":r.get::<i64,_>("at"),"challenge_id":r.get::<Option<String>,_>("challenge_id"),"state":r.get::<String,_>("state"),"detail":r.get::<String,_>("detail")})).collect::<Vec<_>>();
     detail["verification_transitions"] = json!(transitions);
+    detail["reason_summary"] = crate::explanation::capture(&detail)?;
     let mut requests = vec![
         json!({"at":envelope["accepted_at"],"kind":"initial","result":if transitions.is_empty(){response["outcome"].clone()}else{json!("CHALLENGE_REQUIRED")}}),
     ];

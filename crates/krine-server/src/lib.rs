@@ -3,16 +3,19 @@ mod auth;
 mod browser;
 mod checks;
 pub mod config;
+mod connection;
 mod credentials;
 mod entities;
 pub mod error;
 mod events;
+mod explanation;
 mod history;
 mod json;
 mod projection;
 mod provider_http;
 mod providers;
 mod relationships;
+mod retention;
 mod util;
 
 use axum::{
@@ -50,7 +53,7 @@ impl App {
             .acquire_timeout(Duration::from_secs(2))
             .after_connect(|connection, _| {
                 Box::pin(async move {
-                    sqlx::query("SET krine.writer_generation='4'")
+                    sqlx::query("SET krine.writer_generation='5'")
                         .execute(&mut *connection)
                         .await?;
                     sqlx::query("SET statement_timeout='3s'")
@@ -66,18 +69,21 @@ impl App {
             .await?;
         {
             let mut connection = db.acquire().await?;
-            // Migration 0004 updates generation-3 rows before 0006 installs
-            // generation 4. Preserve that upgrade path without admitting old writers.
+            // Migration 0004 updates generation-3 rows before later guards.
+            // Preserve that upgrade path without admitting old writers.
             sqlx::query("SET krine.writer_generation='3'")
                 .execute(&mut *connection)
                 .await?;
             sqlx::migrate!("../../migrations")
                 .run_direct(&mut *connection)
                 .await?;
-            sqlx::query("SET krine.writer_generation='4'")
+            sqlx::query("SET krine.writer_generation='5'")
                 .execute(&mut *connection)
                 .await?;
         }
+        history::configure_retention(&db, config.history_retention_days)
+            .await
+            .map_err(|_| "Could not configure analytical retention")?;
         credentials::bootstrap(&db, &config)
             .await
             .map_err(|_| "Could not initialize application credentials")?;
@@ -154,7 +160,7 @@ pub fn router(app: App) -> Router {
             "/v1/admin/relationships/{kind}/{id}/restorations",
             post(relationships::restore),
         )
-        .route("/v1/admin/setup", get(admin::setup))
+        .route("/v1/admin/setup", get(connection::setup))
         .route(
             "/v1/admin/credentials",
             get(credentials::list).post(credentials::create),
@@ -184,7 +190,13 @@ async fn ready(
     projection::ensure_ready(&app).await?;
     Ok(axum::Json(serde_json::json!({"status":"ready"})))
 }
-pub async fn worker(app: App, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+pub async fn worker(app: App, shutdown: tokio::sync::watch::Receiver<bool>) {
+    tokio::join!(
+        export_worker(app.clone(), shutdown.clone()),
+        retention::worker(app, shutdown)
+    );
+}
+async fn export_worker(app: App, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! { _=shutdown.changed()=>break,_=interval.tick()=> {
@@ -201,6 +213,7 @@ struct ProviderTest {
     ip_endpoint: Option<String>,
     verify_endpoint: Option<String>,
     history_suffix: String,
+    lose_cleanup_ack: bool,
     after_verification: Option<std::sync::Arc<VerificationPause>>,
     after_export: Option<std::sync::Arc<VerificationPause>>,
 }

@@ -22,6 +22,7 @@ struct MockState {
     calls: Vec<Value>,
     ip_calls: usize,
     ip_body: Option<Value>,
+    ip_delay_ms: u64,
     delay_ms: u64,
 }
 struct Fixture {
@@ -298,9 +299,13 @@ async fn mock_ip(
     State(state): State<Arc<Mutex<MockState>>>,
     Path(ip): Path<String>,
 ) -> Json<Value> {
-    let mut state = state.lock().unwrap();
-    state.ip_calls += 1;
-    Json(state.ip_body.clone().unwrap_or_else(||json!({"status":"ok",ip:{"detections":{"risk":91,"proxy":true},"location":{"country_code":"US"}}})))
+    let (delay, body) = {
+        let mut state = state.lock().unwrap();
+        state.ip_calls += 1;
+        (state.ip_delay_ms, state.ip_body.clone().unwrap_or_else(||json!({"status":"ok",ip:{"detections":{"risk":91,"proxy":true},"location":{"country_code":"US"}}})))
+    };
+    tokio::time::sleep(Duration::from_millis(delay)).await;
+    Json(body)
 }
 async fn mock_verify(
     State(state): State<Arc<Mutex<MockState>>>,
@@ -617,7 +622,7 @@ async fn provider_races_crash_recovery_fencing_and_expiry() {
             .await
             .unwrap_err();
     assert!(error.to_string().contains("stop the old server"));
-    sqlx::query("SET krine.writer_generation='4'")
+    sqlx::query("SET krine.writer_generation='5'")
         .execute(&mut *legacy)
         .await
         .unwrap();
@@ -1381,7 +1386,7 @@ async fn provider_coalescing_migration_preserves_latest_revision_and_restarts() 
     assert!(
         incompatible
             .to_string()
-            .contains("generation 4; stop the old server")
+            .contains("generation 5; stop the old server")
     );
     old.close().await;
     app.db.close().await;
@@ -1529,3 +1534,9 @@ async fn provider_review_binds_exact_dependencies_across_concurrent_publications
         }
     }
 }
+
+#[path = "connection_integration.rs"]
+mod connection_tests;
+
+#[path = "retention_integration.rs"]
+mod retention_tests;

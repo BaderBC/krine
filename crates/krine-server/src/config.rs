@@ -17,6 +17,7 @@ pub struct Config {
     pub trusted_proxies: Vec<IpNet>,
     pub development: bool,
     pub max_pending_outbox: i64,
+    pub history_retention_days: i64,
     pub browser_rate: i64,
     pub server_rate: i64,
     pub login_rate: i64,
@@ -60,6 +61,9 @@ impl Config {
                         .map_err(|_| "Invalid trusted proxy CIDR".to_owned())
                 })
                 .collect::<Result<_, _>>()?,
+            history_retention_days: retention_days(
+                env::var("KRINE_HISTORY_RETENTION_DAYS").ok().as_deref(),
+            )?,
             browser_rate: positive("KRINE_BROWSER_RATE_PER_MINUTE", 300)?,
             server_rate: positive("KRINE_SERVER_RATE_PER_MINUTE", 3000)?,
             login_rate: positive("KRINE_LOGIN_RATE_PER_MINUTE", 10)?,
@@ -113,4 +117,41 @@ fn positive(name: &str, default: i64) -> Result<i64, String> {
         return Err(format!("{name} must be between 1 and 1000000"));
     }
     Ok(value)
+}
+
+fn retention_days(value: Option<&str>) -> Result<i64, String> {
+    let days = value
+        .unwrap_or("30")
+        .parse::<i64>()
+        .map_err(|_| "Invalid KRINE_HISTORY_RETENTION_DAYS")?;
+    if !(2..=3650).contains(&days) {
+        return Err("KRINE_HISTORY_RETENTION_DAYS must be between 2 and 3650".into());
+    }
+    Ok(days)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn retention_is_bounded_and_explicit() {
+        assert_eq!(super::retention_days(None).unwrap(), 30);
+        for value in ["2", "30", "3650"] {
+            assert_eq!(
+                super::retention_days(Some(value)).unwrap().to_string(),
+                value
+            );
+        }
+        for value in [
+            "",
+            "0",
+            "1",
+            "-2",
+            "3651",
+            "2.5",
+            "forever",
+            "9223372036854775808",
+        ] {
+            assert!(super::retention_days(Some(value)).is_err());
+        }
+    }
 }

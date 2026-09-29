@@ -23,6 +23,7 @@ cat > /etc/clickhouse-server/users.d/krine.xml <<EOF
             <networks><ip>::/0</ip></networks>
             <grants>
                 <query>GRANT SELECT, INSERT, CREATE TABLE, ALTER TABLE, DROP TABLE ON krine.*</query>
+                <query>GRANT SELECT(database, table, mutation_id, is_done) ON system.mutations</query>
             </grants>
         </krine>
     </users>

@@ -4,13 +4,14 @@
 [protocol v1](protocol.md); [ADR 0010](../decisions/0010-axum-runtime-and-durable-projection.md)
 records the runtime and recovery choices. [ADR 0011](../decisions/0011-provider-attempts-and-versioned-history.md) records provider persistence and history ordering.
 
-This first executable slice includes browser context and action proofs,
+The runtime includes browser context and action proofs,
 authenticated context resolution, backend events and associations, published
 check evaluation, durable retries, operator sessions, policy draft/publication
 history, metric discovery, current entity inspection, durable browser observations, and
 activity backed by the ClickHouse outbox, tested provider configuration, IP
 intelligence, persisted challenge continuation, and durable application credential
-creation/revocation. Relationship correction remains a separate implementation unit. Challenge policies cannot be
+creation/revocation, inspectable relationship correction and observed application
+connection. Challenge policies cannot be
 published before verification is configured. Unconfigured provider metrics are
 explicitly unknown.
 
@@ -41,6 +42,7 @@ or logs.
 | `KRINE_BROWSER_RATE_PER_MINUTE` | Browser requests per normalized source IP; defaults to 300 |
 | `KRINE_SERVER_RATE_PER_MINUTE` | Backend requests per installation; defaults to 3,000 |
 | `KRINE_LOGIN_RATE_PER_MINUTE` | Operator login attempts per source IP; defaults to 10 |
+| `KRINE_HISTORY_RETENTION_DAYS` | Analytical history retention; defaults to 30, range 2–3650; all replicas must agree ([retention](deployment.md#analytical-retention)) |
 | `KRINE_MAX_PENDING_OUTBOX` | Delivery capacity including unfinished-attempt reservations; defaults to 1,000,000 records |
 
 Application credentials are thereafter managed through the authenticated
@@ -157,3 +159,9 @@ retain their audit beyond ordinary 30-day observation cleanup. See
 [ADR 0013](../decisions/0013-reversible-relationship-evidence.md) for the durable
 contract and [protocol](protocol.md#relationship-provenance-and-correction) for
 routes and conflict behavior.
+
+Observed connection and bounded captured Activity reasons use migration 0007 and
+writer generation 5. Receipt markers commit with durable admission, survive
+analytical outages/expiry and distinguish tracking from retained upgrade history.
+Analytical retention is shared through PostgreSQL; changing it never alters metric
+windows or retry protection. See [ADR 0014](../decisions/0014-observed-connection-and-history.md).
