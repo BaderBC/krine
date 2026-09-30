@@ -1,8 +1,10 @@
-# MVP orchestration record
+# Krine orchestration record
+
+**Active work: enterprise product readiness, reopened 2026-09-30.** The founder rejected the prior production-readiness claim. The earlier MVP acceptance below is historical verification evidence, not the completion bar for this work. Follow [the active execution plan](docs/plans/production-readiness.md).
 
 ## Authority and purpose
 
-Finish the documented, production-grade self-hosted MVP. `docs/product/vision.md` and `docs/product/ux.md` govern product scope and taste; accepted ADRs govern architecture. New implementation notes do not override them. The lead orchestrator **does not implement production code**.
+Finish a capable, polished self-hosted trust platform that supports real operator investigation and enterprise operation. The founder's latest scope includes meaningful analytics, user-behavior investigation, representative seeding and enterprise readiness; an MVP feature checklist is insufficient. `docs/product/vision.md` and `docs/product/ux.md` govern product scope and taste; accepted ADRs govern architecture. New implementation notes do not override them. The lead orchestrator **does not implement production code**.
 
 Founder steering: Castle (`castle.io`) and SEON inspired Krine. Treat them as references subordinate to Krine's vision and self-hosting requirement. Use Axum for Rust HTTP; ADR 0010 records that choice.
 
@@ -69,13 +71,13 @@ Before completion: full relevant checks, actual running application, primary end
 
 The first runtime/dashboard are vertical slices, not a reduction of MVP scope. Runtime contracts are in `docs/engineering/{protocol,backend,sdks}.md` and ADRs; consult them rather than inferring from this ledger.
 
-## Current execution state
+## Previous MVP baseline
 
 The final product source baseline is `10ca200`, integrated and pushed to master and the integration branch. All product units are integrated, including observed dashboard `5f64136`, recovery verification `b5cd105`, storage/reliability guide `8a1a241` and architecture map `809132e`. Each received independent review; recovery also received dedicated security. Final repairs `4acbdfd` (packaged inspection routes) and `2a66bf5` (text/input contrast) are integrated with their exact QA-approved hashes. Full Ubuntu CI at the complete product UI/backend `2f1263c` passed (`36574021915`). Full Ubuntu CI at `e5c029a` also passed, including recovery: master `36644153041` and integration `36644152644`.
 
 Native upgrade is complete. Root stopped the original example/API cleanly (both exit 0), stopped Vite, captured and checked stopped-state backups, merged reviewed sources, recreated only ClickHouse on its retained volume, migrated the API to schema 7 and rebuilt/restarted the matching dashboard/example. Exact pre/post credential, provider and historical Cora decision JSON agree; migrations 1–6 retain their checksums. No native business, credential, provider or relationship mutation was used for upgrade verification. A mount enumeration-order assertion was corrected after independent comparison proved Valkey's contents/state unchanged; evidence is retained.
 
-### Release acceptance
+### Historical MVP acceptance
 
 The documented MVP is accepted. All implementation units received independent QA; sensitive trust boundaries also received adversarial security review. Final whole-product QA, security and Founder reviews are approved with no unresolved material finding. The explicit simplification pass is complete. Root exercised the actual updated browser-to-backend denial and inspected its captured explanation and durable reload.
 
