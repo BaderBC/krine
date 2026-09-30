@@ -474,3 +474,15 @@ describe("provider acknowledgement recovery", () => {
     },
   );
 });
+
+it("clears candidate and test secrets when an actor view is disposed", async () => {
+  const model = new ProviderForm(provider());
+  model.edit({ siteKey: "fixture_site", secret: "old_actor_secret" });
+  vi.spyOn(api, "run").mockResolvedValue(testResult());
+  await model.test();
+  expect(model.getSnapshot().fields.secret).toBe("old_actor_secret");
+  model.dispose();
+  expect(model.getSnapshot().fields.secret).toBe("");
+  expect(model.getSnapshot().test).toBeNull();
+  expect(model.getSnapshot().pending).toBeNull();
+});

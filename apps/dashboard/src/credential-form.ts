@@ -1,3 +1,5 @@
+import { validOptionalActor, type ActorIdentity } from "./ActorAttribution";
+import { ownedStorage, sameOwner, validOwner } from "./operator";
 import {
   api,
   ApiError,
@@ -29,6 +31,7 @@ export function validCredential(value: unknown): value is Credential {
   if (!value || typeof value !== "object") return false;
   const item = value as Credential;
   return (
+    validOptionalActor(item.created_by) && validOptionalActor(item.revocation_actor) &&
     typeof item.id === "string" &&
     /^cred_[A-Za-z0-9_-]+$/.test(item.id) &&
     ["browser", "server"].includes(item.kind) &&
@@ -42,7 +45,8 @@ export function validCredential(value: unknown): value is Credential {
     ((item.revoked_at === null && item.revoked_by === null) ||
       (Number.isSafeInteger(item.revoked_at) &&
         item.revoked_at! >= 0 &&
-        item.revoked_by === "administrator"))
+        typeof item.revoked_by === "string" &&
+        Boolean(item.revoked_by)))
   );
 }
 export function validLabel(label: string) {
@@ -61,6 +65,8 @@ function readIntent(storage: Storage): CredentialIntent | null {
   if (
     !value ||
     !op ||
+    !validOwner(op.owner) ||
+    !sameOwner(op.owner, api.owner()) ||
     op.method !== "POST" ||
     !/^[\da-f-]{36}$/i.test(op.key) ||
     !Number.isSafeInteger(value.startedAt) ||
@@ -88,6 +94,7 @@ function readIntent(storage: Storage): CredentialIntent | null {
       path: op.path,
       method: "POST",
       key: op.key,
+      owner: op.owner,
       body: expectedBody,
     },
     startedAt: value.startedAt,
@@ -110,7 +117,7 @@ export class CredentialForm {
   private listeners = new Set<() => void>();
   private revocations = new Map<
     string,
-    { revoked_at: number; revoked_by: "administrator" }
+    { revoked_at: number; revoked_by: string | null; revocation_actor?: ActorIdentity | null }
   >();
   private alive = true;
   private storage: Storage | null = null;
@@ -119,7 +126,10 @@ export class CredentialForm {
     storage?: Storage,
   ) {
     try {
-      this.storage = storage ?? sessionStorage;
+      this.storage = ownedStorage(
+        storage ?? sessionStorage,
+        api.requireOwner(),
+      );
       this.state.pending = readIntent(this.storage);
       this.state.expired = Boolean(
         this.state.pending &&
@@ -252,7 +262,7 @@ export class CredentialForm {
         busy: false,
         ...(certain ? { pending: null } : {}),
         error:
-          cause instanceof ApiError && [401, 403].includes(cause.status)
+          cause instanceof ApiError && cause.status === 401
             ? "Sign in again, then retry this same request."
             : certain
               ? "Krine rejected this request. Refresh the credentials and check the label before trying again."
@@ -279,7 +289,8 @@ export class CredentialForm {
       if (item.revoked_at !== null && !this.revocations.has(item.id))
         this.revocations.set(item.id, {
           revoked_at: item.revoked_at,
-          revoked_by: "administrator",
+          revoked_by: item.revoked_by,
+          ...(item.revocation_actor === undefined ? {} : { revocation_actor: item.revocation_actor }),
         });
     }
     if (this.state.result) {
@@ -301,6 +312,7 @@ export class CredentialForm {
   }
   dispose() {
     this.alive = false;
+    this.state = { ...this.state, result: null };
     this.listeners.clear();
   }
 }

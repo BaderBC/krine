@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -508,7 +509,7 @@ it.each([null, { allowed_origins: null, active_credentials: false }])(
       retry,
     );
     expect(retry.closest("details")).toBe(section);
-    expect(sessionStorage.getItem("krine:credential-mutation:v1")).toContain(
+    expect(operatorStorage.getItem("krine:credential-mutation:v1")).toContain(
       intent.key,
     );
     vi.mocked(api.run).mockResolvedValueOnce({
@@ -658,3 +659,43 @@ it.each(["retained page", "different search page", "stale active snapshot"])(
     expect(listReads).toBeLessThan(8);
   },
 );
+
+it("keeps named credential attribution separate from the legacy shared administrator", async () => {
+  records = [
+    {
+      ...initial,
+      id: "cred_named",
+      label: "Named credential",
+      created_by: { id: "op_creator", type: "operator", name: "Alex Creator" },
+      revoked_at: 5,
+      revoked_by: "op_reviewer",
+      revocation_actor: {
+        id: "op_reviewer",
+        type: "operator",
+        name: "Lee Reviewer",
+      },
+    },
+    {
+      ...initial,
+      id: "cred_legacy",
+      label: "Legacy credential",
+      revoked_at: 4,
+      revoked_by: "administrator",
+    },
+  ];
+  const router = createMemoryRouter(
+    [{ path: "/settings", element: <Settings /> }],
+    { initialEntries: ["/settings"] },
+  );
+  render(<RouterProvider router={router} />);
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByText("Application credentials", {
+        selector: "summary",
+      }),
+    );
+  await screen.findByText(/Alex Creator/);
+  expect(screen.getByText(/Lee Reviewer/)).toBeTruthy();
+  expect(screen.getByText(/Shared administrator \(legacy\)/)).toBeTruthy();
+});

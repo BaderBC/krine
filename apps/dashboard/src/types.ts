@@ -1,3 +1,4 @@
+import type { ActorIdentity } from "./ActorAttribution";
 export type Scalar = string | number | boolean;
 export type ValueType = "string" | "number" | "boolean";
 export type Reference =
@@ -46,6 +47,7 @@ export interface CheckSummary extends Omit<Check, "draft"> {
 export interface Version {
   version: number;
   published_at: number;
+  published_by?: ActorIdentity | null;
   policy: Policy;
   restored_from_version?: number | null;
 }
@@ -180,6 +182,7 @@ export interface Setup {
   sdk: { browser_package: string; server_package: string };
 }
 export interface Provider {
+  created_by?: ActorIdentity | null;
   capability: "ip_intelligence" | "verification";
   provider: "proxycheck" | "turnstile";
   enabled: boolean;
@@ -195,6 +198,8 @@ export interface Provider {
 }
 
 export interface Credential {
+  created_by?: ActorIdentity | null;
+  revocation_actor?: ActorIdentity | null;
   id: string;
   kind: "browser" | "server";
   label: string;
@@ -202,7 +207,7 @@ export interface Credential {
   public_key: string | null;
   created_at: number;
   revoked_at: number | null;
-  revoked_by: "administrator" | null;
+  revoked_by: string | null;
 }
 export interface CredentialCreation {
   credential: Credential;
@@ -235,6 +240,7 @@ export interface Relationship extends RelationshipSummary {
   metadata: Record<string, unknown>;
 }
 export interface RelationshipAudit {
+  actor_identity?: ActorIdentity | null;
   id: string;
   at: number;
   action: string;

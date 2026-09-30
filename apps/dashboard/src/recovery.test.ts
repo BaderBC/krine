@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DraftController } from "./draft";
 import { ApiError } from "./api";
@@ -168,7 +169,7 @@ for (const kind of ["save", "restore"] as const) {
           ? "conflict"
           : "changed",
       );
-      expect(sessionStorage.getItem("krine:draft:qa_replay")).toContain(
+      expect(operatorStorage.getItem("krine:draft:qa_replay")).toContain(
         "newer local work",
       );
     },
@@ -208,14 +209,14 @@ it.each(["publish", "restore"] as const)(
     finishOld(result);
     await oldPromise;
     expect(reopened.state.action?.status).toBe("running");
-    expect(sessionStorage.getItem("krine:draft:qa_replay")).toContain(
+    expect(operatorStorage.getItem("krine:draft:qa_replay")).toContain(
       "new owner edits",
     );
     finishNew(result);
     await newPromise;
     expect(reopened.state.policy).toEqual(allow);
     expect(reopened.state.description).toBe("new owner edits");
-    expect(sessionStorage.getItem("krine:draft:qa_replay")).toContain(
+    expect(operatorStorage.getItem("krine:draft:qa_replay")).toContain(
       "new owner edits",
     );
   },

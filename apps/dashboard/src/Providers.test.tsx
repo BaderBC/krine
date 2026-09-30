@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -160,7 +161,7 @@ function mount(
 }
 describe("provider configuration interface", () => {
   it("keeps the integration tutorial collapsed and preserves the return to the policy draft", async () => {
-    sessionStorage.setItem("krine:draft:can_claim", "existing recovery");
+    operatorStorage.setItem("krine:draft:can_claim", "existing recovery");
     mount();
     await screen.findByLabelText("Site key");
     expect(
@@ -172,7 +173,7 @@ describe("provider configuration interface", () => {
         .getByRole("link", { name: "Return to policy draft · can_claim" })
         .getAttribute("href"),
     ).toBe("/inspect/check?name=can_claim&view=draft");
-    expect(sessionStorage.getItem("krine:draft:can_claim")).toBe(
+    expect(operatorStorage.getItem("krine:draft:can_claim")).toBe(
       "existing recovery",
     );
   });
@@ -313,4 +314,24 @@ describe("provider configuration interface", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Site key"));
     expect(api.run).not.toHaveBeenCalled();
   });
+});
+
+it("shows the captured provider configuration actor without querying operator administration", async () => {
+  current.created_by = {
+    id: "op_config",
+    type: "operator",
+    name: "Alex Configurator",
+  };
+  const router = createMemoryRouter(
+    [{ path: "/settings", element: <Settings /> }],
+    { initialEntries: ["/settings?provider=verification#providers"] },
+  );
+  render(<RouterProvider router={router} />);
+  await screen.findByText(/Alex Configurator/);
+  expect(screen.getByText("(op_config)")).toBeTruthy();
+  expect(
+    vi
+      .mocked(api.get)
+      .mock.calls.some(([path]) => path.startsWith("/operators")),
+  ).toBe(false);
 });

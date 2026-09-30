@@ -1,36 +1,114 @@
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { api, errorMessage, mutation } from "./api";
-import { Loading, Notice } from "./shared";
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { api, ApiError, errorMessage, mutation } from "./api";
+import { Loading, Notice, Time } from "./shared";
 import { InstallationContext } from "./Overview";
+import { useAccess } from "./access";
+import { SignIn, CredentialReveal } from "./OperatorAuth";
+import { hasLegacyRecovery } from "./operator";
+import type { AuthMethods } from "./operator";
 
 export function App() {
+  const { session, suspended, epoch, can, revealedCredential } = useAccess();
   const [initialized, setInitialized] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [reauthenticate, setReauthenticate] = useState(false);
+  const [methods, setMethods] = useState<AuthMethods | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [legacy] = useState(() => {
+    try {
+      return hasLegacyRecovery(sessionStorage);
+    } catch {
+      return false;
+    }
+  });
   const dialog = useRef<HTMLDialogElement>(null);
-  const password = useRef<HTMLInputElement>(null);
-  const location = useLocation();
+  const signoutDialog = useRef<HTMLDialogElement>(null);
+  const [confirmSignout, setConfirmSignout] = useState(false);
   useEffect(() => {
-    api.onUnauthorized = () => setReauthenticate(true);
-    void api
-      .session()
-      .then(() => setAuthenticated(true))
-      .catch(() => {
-        /* Login form is the recovery path. */
-      })
-      .finally(() => setInitialized(true));
+    if (confirmSignout) signoutDialog.current?.showModal();
+    else if (signoutDialog.current?.open) signoutDialog.current.close();
+  }, [confirmSignout]);
+  const channel = useRef<BroadcastChannel | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  async function reloadMethods() {
+    try {
+      setMethods(await api.authMethods());
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+  useEffect(() => {
+    let live = true;
+    async function initialize() {
+      try {
+        const value = await api.authMethods();
+        if (!live) return;
+        setMethods(value);
+        await api.session();
+      } catch (cause) {
+        if (live && !(cause instanceof ApiError && cause.status === 401))
+          setError(errorMessage(cause));
+      } finally {
+        if (live) setInitialized(true);
+      }
+    }
+    async function refresh() {
+      if (!api.current) return;
+      try {
+        const value = await api.authMethods();
+        if (live) setMethods(value);
+        await api.session();
+      } catch (cause) {
+        if (live && cause instanceof ApiError && cause.status === 401)
+          api.suspend();
+      }
+    }
+    api.onPrivilegeChanged = () => void refresh();
+    if (typeof BroadcastChannel !== "undefined") {
+      channel.current = new BroadcastChannel("krine-operator-session");
+      channel.current.onmessage = () => {
+        api.invalidateRequests();
+        api.suspend();
+        void refresh();
+      };
+    }
+    const focus = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
+    const interval = setInterval(() => void refresh(), 60_000);
+    void initialize();
     return () => {
-      api.onUnauthorized = undefined;
+      live = false;
+      api.onPrivilegeChanged = undefined;
+      clearInterval(interval);
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+      channel.current?.close();
+      channel.current = null;
     };
   }, []);
   useEffect(() => {
-    if (reauthenticate) dialog.current?.showModal();
+    if (!session) return;
+    const delay = Math.max(
+      0,
+      Math.min(session.expires_at - Date.now(), 2_147_483_647),
+    );
+    const timer = setTimeout(() => api.suspend(), delay);
+    return () => clearTimeout(timer);
+  }, [session]);
+  useEffect(() => {
+    if (suspended && session) dialog.current?.showModal();
     else if (dialog.current?.open) dialog.current.close();
-  }, [reauthenticate]);
+  }, [suspended, session]);
   const section =
     location.pathname === "/inspect/check"
       ? "checks"
@@ -39,61 +117,35 @@ export function App() {
         ? "activity"
         : location.pathname.split("/")[1] || "overview";
   useEffect(() => {
-    document.title = `${section.replace(/^./, (value) => value.toUpperCase())} · Krine`;
+    document.title = `${section.replace(/^./, (v) => v.toUpperCase())} · Krine`;
   }, [section]);
-  async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    setBusy(true);
+  function signedIn() {
     setError(null);
-    try {
-      await api.session(String(new FormData(form).get("password") ?? ""));
-      setAuthenticated(true);
-      setReauthenticate(false);
-      form.reset();
-    } catch (cause) {
-      setError(errorMessage(cause));
-      password.current?.focus();
-    } finally {
-      setBusy(false);
-    }
+    if (api.current?.authentication_method === "installation_recovery")
+      navigate("/settings?view=operators", { replace: true });
+    channel.current?.postMessage("changed");
+  }
+  function switchOperator() {
+    api.clear();
+    setError(null);
+    channel.current?.postMessage("changed");
   }
   async function logout() {
     setBusy(true);
     setError(null);
     try {
       await api.run(mutation("/session", {}, "DELETE"));
-      api.csrf = "";
-      setAuthenticated(false);
+      setConfirmSignout(false);
+      switchOperator();
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (cause instanceof ApiError && cause.status === 401) {
+        setConfirmSignout(false);
+        switchOperator();
+      } else setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
   }
-  const loginForm = (
-    <form className="login-form" onSubmit={(event) => void login(event)}>
-      <h1>{reauthenticate ? "Sign in again." : "Sign in to Krine."}</h1>
-      <p className="muted">
-        Use the administrator password configured for this installation.
-        {reauthenticate && " Your unsaved work remains open."}
-      </p>
-      <label>
-        Administrator password
-        <input
-          ref={password}
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
-      </label>
-      {error && <Notice>{error}</Notice>}
-      <button className="primary" disabled={busy} type="submit">
-        {busy ? "Signing in…" : "Sign in"}
-      </button>
-    </form>
-  );
   return (
     <>
       <a className="skip-link" href="#main">
@@ -103,45 +155,33 @@ export function App() {
         <Link className="brand" to="/">
           Krine<span className="deployment">{window.location.host}</span>
         </Link>
-        {authenticated && (
+        {session && (
           <>
-            <nav aria-label="Main navigation">
-              <Link to="/" aria-current={section === "overview" ? "page" : undefined} className={section === "overview" ? "active" : undefined}>Overview</Link>
-              <Link
-                to="/checks"
-                aria-current={section === "checks" ? "page" : undefined}
-                className={section === "checks" ? "active" : undefined}
-              >
-                Checks
-              </Link>
-              <Link
-                to="/activity"
-                aria-current={section === "activity" ? "page" : undefined}
-                className={section === "activity" ? "active" : undefined}
-              >
-                Activity
-              </Link>
-              <Link
-                to="/metrics"
-                aria-current={section === "metrics" ? "page" : undefined}
-                className={section === "metrics" ? "active" : undefined}
-              >
-                Metrics
-              </Link>
-            </nav>
+            {can("investigate") && (
+              <nav aria-label="Main navigation">
+                {[
+                  ["overview", "/", "Overview"],
+                  ["checks", "/checks", "Checks"],
+                  ["activity", "/activity", "Activity"],
+                  ["metrics", "/metrics", "Metrics"],
+                ].map(([key, path, label]) => (
+                  <Link
+                    key={key}
+                    to={path!}
+                    aria-current={section === key ? "page" : undefined}
+                    className={section === key ? "active" : undefined}
+                  >
+                    {label}
+                  </Link>
+                ))}
+              </nav>
+            )}
             <div className="header-utilities">
               <NavLink to="/settings">Settings</NavLink>
-              <button
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Sign out? Save open changes and copy any newly revealed secrets before continuing.",
-                    )
-                  )
-                    void logout();
-                }}
-              >
+              <span className="operator-name">
+                {session.operator?.name ?? "Recovery"}
+              </span>
+              <button disabled={busy} onClick={() => setConfirmSignout(true)}>
                 Sign out
               </button>
             </div>
@@ -149,20 +189,110 @@ export function App() {
         )}
       </header>
       <main id="main" tabIndex={-1}>
+        {initialized && methods && !session && error && <Notice>{error}</Notice>}
         {!initialized ? (
           <Loading />
-        ) : authenticated ? (
-          <>
-            <InstallationContext />
-            {error && !reauthenticate && <Notice>{error}</Notice>}
-            <Outlet />
-          </>
+        ) : !methods ? (
+          <Notice retry={() => void reloadMethods()}>
+            {error ?? "Sign-in methods could not be loaded."}
+          </Notice>
+        ) : session ? (
+          <div key={epoch}>
+            {session.authentication_method === "installation_recovery" ? (
+              <aside className="recovery-banner">
+                <strong>Restricted recovery</strong>
+                <p>Operator access only. {session.recovery_reason}</p>
+                <p>
+                  Expires <Time at={session.expires_at} />.
+                </p>
+              </aside>
+            ) : (
+              <InstallationContext />
+            )}
+            {legacy && (
+              <Notice>
+                Earlier browser recovery records have no operator identity. They
+                remain untouched and will not be replayed. Inspect the
+                corresponding resource and audit before creating a new change.
+              </Notice>
+            )}
+            {error && !suspended && <Notice>{error}</Notice>}
+            {!can("investigate") && location.pathname !== "/settings" ? (
+              <>
+                <h1>Operator access only.</h1>
+                <p>
+                  This recovery session cannot inspect customer history or
+                  configuration.
+                </p>
+                <Link to="/settings?view=operators">Manage operators</Link>
+              </>
+            ) : (
+              <Outlet />
+            )}
+          </div>
         ) : (
-          loginForm
+          <SignIn
+            methods={methods}
+            onSignedIn={signedIn}
+            onSwitch={switchOperator}
+            reloadMethods={reloadMethods}
+          />
         )}
       </main>
-      <dialog ref={dialog} onCancel={(event) => event.preventDefault()}>
-        {authenticated ? loginForm : null}
+      <dialog ref={dialog} onCancel={(e) => e.preventDefault()}>
+        {suspended && session && methods ? (
+          revealedCredential ? (
+            <div className="login-form">
+              <p>
+                Your session has ended. Save this already-issued credential
+                before signing in again.
+              </p>
+              <CredentialReveal
+                value={revealedCredential}
+                onSaved={() => api.revealCredential(null)}
+              />
+            </div>
+          ) : session.authentication_method === "installation_recovery" ? (
+            <div className="login-form">
+              <h1>Recovery session ended.</h1>
+              <p>
+                Arm a new host grant to continue. Requests remain unconfirmed
+                until their effects are inspected.
+              </p>
+              <button onClick={switchOperator}>Return to sign in</button>
+            </div>
+          ) : (
+            <SignIn
+              key={session.actor_id}
+              methods={methods}
+              previous={session}
+              onSignedIn={signedIn}
+              onSwitch={switchOperator}
+              reloadMethods={reloadMethods}
+            />
+          )
+        ) : null}
+      </dialog>
+      <dialog
+        ref={signoutDialog}
+        onCancel={() => setConfirmSignout(false)}
+        aria-labelledby="signout-title"
+      >
+        <h2 id="signout-title">Sign out?</h2>
+        <p>
+          Save open changes and copy newly revealed credentials first.
+          Unconfirmed changes may already have succeeded; inspect their
+          resources before repeating them.
+        </p>
+        {error && <Notice>{error}</Notice>}
+        <div className="actions">
+          <button disabled={busy} onClick={() => void logout()}>
+            {busy ? "Signing out…" : "Confirm sign out"}
+          </button>
+          <button disabled={busy} onClick={() => setConfirmSignout(false)}>
+            Stay signed in
+          </button>
+        </div>
       </dialog>
       <footer className="site-footer">
         Krine · Self-hosted trust decisions

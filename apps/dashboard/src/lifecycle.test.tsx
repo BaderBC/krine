@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -185,7 +186,9 @@ it.each(["publications", "restorations"])(
     await act(async () => router.navigate("/checks/qa?view=draft"));
     const desc = await screen.findByLabelText(/Description/);
     await user.type(desc, " newer unsaved");
-    expect(sessionStorage.getItem("krine:draft:qa")).toContain("newer unsaved");
+    expect(operatorStorage.getItem("krine:draft:qa")).toContain(
+      "newer unsaved",
+    );
     await act(async () =>
       finish(
         kind === "publications"
@@ -193,7 +196,9 @@ it.each(["publications", "restorations"])(
           : { ...current, draft_revision: 4 },
       ),
     );
-    expect(sessionStorage.getItem("krine:draft:qa")).toContain("newer unsaved");
+    expect(operatorStorage.getItem("krine:draft:qa")).toContain(
+      "newer unsaved",
+    );
   },
 );
 import { DraftController } from "./draft";
@@ -220,7 +225,7 @@ it("old autosave response cannot delete a reopened controller recovery copy", as
     { ...policy, otherwise: "ALLOW" } as any,
     "newer controller edits",
   );
-  expect(sessionStorage.getItem("krine:draft:qa")).toContain(
+  expect(operatorStorage.getItem("krine:draft:qa")).toContain(
     "newer controller edits",
   );
   finish({
@@ -229,7 +234,7 @@ it("old autosave response cannot delete a reopened controller recovery copy", as
     draft: { ...policy, otherwise: "ALLOW" },
   });
   await saving;
-  expect(sessionStorage.getItem("krine:draft:qa")).toContain(
+  expect(operatorStorage.getItem("krine:draft:qa")).toContain(
     "newer controller edits",
   );
 });

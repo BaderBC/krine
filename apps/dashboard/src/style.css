@@ -1481,3 +1481,131 @@ body:has(.subject-page) main { padding-top: 22px; }
   .profile-toolbar .profile-range { width: 100%; max-width: none; justify-content: flex-start; }
   .profile-toolbar .profile-range .subtle-link { text-align: left; flex-basis: auto; }
 }
+
+/* Access follows the existing settings hierarchy and form rhythm. */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  border-bottom: 1px solid #dedfd8;
+  margin-bottom: 2rem;
+  padding-bottom: 0.8rem;
+}
+.settings-tabs [aria-current="page"] {
+  color: #242622;
+  font-weight: 600;
+}
+.operator-name {
+  max-width: 12rem;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  color: #62685e;
+}
+.login-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.recovery-banner {
+  border-left: 3px solid #62685e;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1.5rem;
+}
+.recovery-banner p {
+  margin: 0.25rem 0;
+}
+.operator-form,
+.session-revoke {
+  display: grid;
+  gap: 1rem;
+  max-width: 36rem;
+  margin: 1.5rem 0;
+}
+.operator-form label,
+.session-revoke label,
+.audit-filters label {
+  display: grid;
+  gap: 0.4rem;
+}
+.operator-form textarea {
+  min-height: 5rem;
+  width: 100%;
+}
+.operator-detail,
+.operator-sessions {
+  margin-top: 2rem;
+}
+.credential-reveal {
+  max-width: 38rem;
+  padding: 1.25rem 0;
+}
+.credential-reveal input {
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.audit-filters label {
+  flex: 1 1 10rem;
+}
+.audit-list,
+.session-list {
+  list-style: none;
+  padding: 0;
+}
+.audit-list > li {
+  padding: 1.25rem 0;
+  border-bottom: 1px solid #dedfd8;
+  overflow-wrap: anywhere;
+}
+.audit-list > li > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.audit-list p {
+  margin: 0.5rem 0;
+}
+.audit-changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.85rem;
+}
+.audit-changes div {
+  display: flex;
+  gap: 0.5rem;
+}
+.audit-changes dt {
+  color: #62685e;
+}
+.audit-changes dd {
+  margin: 0;
+}
+.session-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #dedfd8;
+}
+.text-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .operator-name {
+    display: none;
+  }
+  .settings-tabs {
+    gap: 1rem;
+  }
+}

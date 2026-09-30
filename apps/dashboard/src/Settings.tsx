@@ -1,3 +1,6 @@
+import { useAccess } from "./access";
+import { OperatorAccess } from "./OperatorSettings";
+import { OperatorAudit } from "./OperatorAudit";
 import { Connection } from "./Connection";
 import { checkUrl, uniqueSelector } from "./addresses";
 import { useEffect, useRef, useState } from "react";
@@ -55,6 +58,52 @@ function validSetup(value: unknown): value is Setup {
 }
 
 export function Settings() {
+  const { can, session } = useAccess();
+  const [params] = useSearchParams();
+  const view =
+    params.get("view") ?? (can("investigate") ? "connection" : "operators");
+  const tabs = [
+    ["connection", "Application", can("investigate")],
+    ["sessions", "Your sessions", Boolean(session?.operator)],
+    ["operators", "Operators", can("manage_operators")],
+    ["audit", "Audit", can("audit")],
+  ] as const;
+  const permitted = tabs.some(([key, , allowed]) => key === view && allowed);
+  return (
+    <>
+      <PageTitle title="Settings" />
+      <nav className="settings-tabs" aria-label="Settings">
+        {tabs
+          .filter(([, , allowed]) => allowed)
+          .map(([key, label]) => (
+            <Link
+              key={key}
+              to={`/settings?view=${key}`}
+              aria-current={view === key ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          ))}
+      </nav>
+      {!permitted ? (
+        <p className="help">
+          Your current role does not have access to this settings page. Choose
+          an available section above.
+        </p>
+      ) : view === "operators" ? (
+        <OperatorAccess key="operators" />
+      ) : view === "sessions" ? (
+        <OperatorAccess key="sessions" ownOnly />
+      ) : view === "audit" ? (
+        <OperatorAudit />
+      ) : (
+        <ApplicationSettings />
+      )}
+    </>
+  );
+}
+function ApplicationSettings() {
+  const { can } = useAccess();
   const setup = useResource<Setup>("/setup", validSetup);
   const [params] = useSearchParams();
   const selected = uniqueSelector(params, "check");
@@ -95,7 +144,6 @@ export function Settings() {
       : "";
   return (
     <>
-      <PageTitle title="Settings" />
       {selectedCheck && (
         <p className="help">
           <Link
@@ -147,11 +195,13 @@ export function Settings() {
               The public key identifies this installation. Keep the server
               secret exclusively in your application backend.
             </p>
-            <Credentials
-              setup={config}
-              refreshSetup={setup.refresh}
-              report={setCredentialWork}
-            />
+            {can("administer") && (
+              <Credentials
+                setup={config}
+                refreshSetup={setup.refresh}
+                report={setCredentialWork}
+              />
+            )}
             <details id="integration-reference">
               <summary>SDK integration reference</summary>
               <h3>Browser · @krine/browser 0.1.0</h3>

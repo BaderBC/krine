@@ -1,3 +1,5 @@
+import { validOptionalActor } from "./ActorAttribution";
+import { ownedStorage, sameOwner, validOwner } from "./operator";
 import { relationshipPath } from "./addresses";
 import {
   api,
@@ -105,6 +107,7 @@ export function validRelationshipDetail(
         typeof item.action === "string" &&
         typeof item.reason === "string" &&
         nullableId(item.actor) &&
+        validOptionalActor(item.actor_identity) &&
         (item.revision === null ||
           (Number.isSafeInteger(item.revision) &&
             Number(item.revision) >= 1)) &&
@@ -177,6 +180,8 @@ function validIntent(value: unknown): value is RelationshipIntent {
     timestamp(intent.startedAt) &&
     intent.startedAt <= Date.now() &&
     object(intent.operation) &&
+    validOwner(intent.operation.owner) &&
+    sameOwner(intent.operation.owner, api.owner()) &&
     intent.operation.method === "POST" &&
     typeof intent.operation.key === "string" &&
     /^[\da-f-]{36}$/i.test(intent.operation.key) &&
@@ -207,7 +212,10 @@ export class RelationshipForm {
     storage?: Storage,
   ) {
     try {
-      this.storage = storage ?? sessionStorage;
+      this.storage = ownedStorage(
+        storage ?? sessionStorage,
+        api.requireOwner(),
+      );
       const saved = this.storage.getItem(recoveryKey);
       if (saved) {
         const intent: unknown = JSON.parse(saved);
@@ -314,7 +322,8 @@ export class RelationshipForm {
     } catch (error) {
       if (!this.alive) return;
       const certain = definitiveMutationFailure(error);
-      const conflict = error instanceof ApiError && error.status === 409;
+      const conflict =
+        certain && error instanceof ApiError && error.status === 409;
       if (certain) this.persist(null);
       this.update({
         busy: false,
@@ -326,7 +335,7 @@ export class RelationshipForm {
             : "This relationship changed or the request conflicts with an earlier change. Inspect current evidence and explicitly review a new change."
           : certain
             ? "Krine rejected this change. Inspect current evidence before reviewing another change."
-            : error instanceof ApiError && [401, 403].includes(error.status)
+            : error instanceof ApiError && error.status === 401
               ? "Sign in again, then retry this same reviewed request."
               : "The result is unconfirmed. Retry this same reviewed request before making another change.",
       });

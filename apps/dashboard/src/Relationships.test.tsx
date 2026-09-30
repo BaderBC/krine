@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -761,7 +762,7 @@ it("keeps a pending reviewed restoration when another malformed entity retry fai
   vi.mocked(api.run).mockResolvedValueOnce(null);
   await user.click(screen.getByRole("button", { name: "Confirm restoration" }));
   await screen.findByRole("button", { name: "Retry same reviewed request" });
-  const saved = sessionStorage.getItem("krine:relationship-mutation:v1");
+  const saved = operatorStorage.getItem("krine:relationship-mutation:v1");
   entityFailure = {
     ...structuredClone(entity),
     kind: "user",
@@ -775,7 +776,7 @@ it("keeps a pending reviewed restoration when another malformed entity retry fai
   expect(document.querySelector(".review")?.textContent).toContain(
     "Restore reviewed evidence",
   );
-  expect(sessionStorage.getItem("krine:relationship-mutation:v1")).toBe(saved);
+  expect(operatorStorage.getItem("krine:relationship-mutation:v1")).toBe(saved);
   expect(screen.getByRole("heading", { name: "cli_one" })).toBeTruthy();
   expect(api.run).toHaveBeenCalledTimes(2);
 });
@@ -857,4 +858,37 @@ it("rejects duplicate relationship source selectors without reading either sourc
       .mocked(api.get)
       .mock.calls.every(([path]) => !path.startsWith("/lookup/relationships?")),
   ).toBe(true);
+});
+
+it("renders captured correction actors separately from legacy shared audit", async () => {
+  detail.audit.items = [
+    {
+      id: "audit_named",
+      at: 200,
+      action: "correct",
+      reason: "Named correction",
+      actor: "op_reviewer",
+      actor_identity: {
+        id: "op_reviewer",
+        type: "operator",
+        name: "Lee Reviewer",
+      },
+      revision: 2,
+      relationship: corrected,
+    },
+    {
+      id: "audit_legacy",
+      at: 150,
+      action: "correct",
+      reason: "Legacy correction",
+      actor: "administrator",
+      actor_identity: null,
+      revision: 2,
+      relationship: corrected,
+    },
+  ];
+  mount();
+  await screen.findByText(/Lee Reviewer/);
+  expect(screen.getByText("(op_reviewer)")).toBeTruthy();
+  expect(screen.getByText(/Shared administrator \(legacy\)/)).toBeTruthy();
 });

@@ -1,3 +1,5 @@
+import { ActorAttribution } from "./ActorAttribution";
+import { useAccess } from "./access";
 import { checkUrl } from "./addresses";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -116,6 +118,7 @@ function ProviderPanel({
           </>
         )}
       </p>
+      {server.revision > 0 && <p className="help">Saved revision {server.revision} · <ActorAttribution value={server.created_by} /></p>}
       {server.enabled && (
         <p className="help">
           Connection tests do not guarantee later availability. Inspect the
@@ -436,6 +439,7 @@ export function Providers({
 }: {
   reportWork: (state: SettingsWork) => void;
 }) {
+  const { can } = useAccess();
   const resource = useResource<{ items: Provider[] }>("/providers");
   const [params] = useSearchParams();
   const location = useLocation();
@@ -467,14 +471,27 @@ export function Providers({
       <h2>Providers</h2>
       <ResourceError resource={resource} />
       {resource.data ? (
-        resource.data.items.map((provider) => (
-          <ProviderPanel
-            key={provider.capability}
-            provider={provider}
-            selected={params.get("provider") === provider.capability}
-            report={report}
-          />
-        ))
+        resource.data.items.map((provider) =>
+          can("administer") ? (
+            <ProviderPanel
+              key={provider.capability}
+              provider={provider}
+              selected={params.get("provider") === provider.capability}
+              report={report}
+            />
+          ) : (
+            <div key={provider.capability} className="provider-read">
+              <h3>{label(provider.capability)}</h3>
+              <p>
+                {provider.enabled ? "Configured" : "Not configured"} ·{" "}
+                {provider.provider ?? "No provider"}
+              </p>
+              <p className="help">
+                {provider.message} An Admin can change provider configuration.
+              </p>
+            </div>
+          ),
+        )
       ) : resource.loading ? (
         <Loading />
       ) : null}
