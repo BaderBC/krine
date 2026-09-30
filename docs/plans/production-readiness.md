@@ -60,6 +60,10 @@ Use fresh pinned `ubuntu-24.04` GitHub-hosted jobs for sustained measurement and
 
 User-specific deployment, scale, retention, SSO and compliance requirements have been requested asynchronously. Until clarified, work targets one self-hosted company with multiple operators. This is a working assumption, not an invented compliance commitment.
 
+### 5. Present the finished product clearly
+
+Founder requested an improved README with dashboard screenshots. After the relevant dashboard milestones pass actual packaged QA and Founder review, assign a dedicated implementer to improve the README and capture a small set of screenshots from the real populated application. Use only the owned synthetic dataset; show useful Overview, subject investigation and decision/policy evidence, with no secrets or real customer information. Explain the product and self-hosted quick start in plain language, linking to durable operational detail instead of duplicating it. Match every capability and readiness claim to verified behavior. Fresh independent QA must review the prose, commands, links, screenshots and their agreement with the final UI. Refresh affected screenshots if subsequent accepted UI changes make them stale.
+
 ## Acceptance
 
 - The running product looks deliberate and supports the complete investigation story with representative, substantial data.
@@ -69,6 +73,6 @@ User-specific deployment, scale, retention, SSO and compliance requirements have
 - Multi-operator security and audit trails are enforced and adversarially reviewed.
 - Production visibility, failure response, capacity and recovery have measured evidence and honest limits.
 - Every implementation unit passes independent QA. Final Founder/UX, security, simplification and whole-product review inspect the actual running system.
-- Durable product/architecture docs match the new scope; all material findings are resolved; Git is clean and the final state is pushed.
+- Durable product/architecture docs and the improved, illustrated README match the final product; all material findings are resolved; Git is clean and the final state is pushed.
 
 Passing the old MVP checklist or a large test count alone does not satisfy this acceptance bar.
