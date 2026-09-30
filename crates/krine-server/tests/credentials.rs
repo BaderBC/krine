@@ -19,6 +19,7 @@ struct Fixture {
     server: tokio::task::JoinHandle<()>,
     cookie: String,
     csrf: String,
+    actor_id: String,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -40,10 +41,17 @@ impl Fixture {
             .timeout(Duration::from_secs(12))
             .build()
             .unwrap();
+        let enrollment=http.post(format!("{url}/v1/admin/auth/bootstrap"))
+            .header("origin",&app.config.admin_origin)
+            .json(&json!({"installation_secret":app.config.admin_password,"sign_in_name":"fixture","name":"Fixture operator"}))
+            .send().await.unwrap();
+        assert_eq!(enrollment.status(), StatusCode::OK);
+        let enrollment: Value = enrollment.json().await.unwrap();
+        let actor_id = enrollment["operator"]["id"].as_str().unwrap().to_owned();
         let response = http
             .post(format!("{url}/v1/admin/session"))
             .header("origin", &app.config.admin_origin)
-            .json(&json!({"password":app.config.admin_password}))
+            .json(&json!({"sign_in_name":"fixture","credential":enrollment["credential"]}))
             .send()
             .await
             .unwrap();
@@ -68,6 +76,7 @@ impl Fixture {
             server,
             cookie,
             csrf,
+            actor_id,
         }
     }
     fn config() -> Config {
@@ -96,6 +105,7 @@ impl Fixture {
             .header("origin", &self.app.config.admin_origin)
             .header("cookie", &self.cookie)
             .header("x-csrf-token", &self.csrf)
+            .header("x-krine-operator-id", &self.actor_id)
             .header("idempotency-key", key)
     }
     async fn create(&self, kind: &str, label: &str, key: &str) -> Value {
@@ -161,7 +171,7 @@ async fn error(request: RequestBuilder, code: &str) {
     let response = request.send().await.unwrap();
     let expected = match code {
         "unauthenticated" => StatusCode::UNAUTHORIZED,
-        "forbidden" => StatusCode::FORBIDDEN,
+        "forbidden" | "csrf_failed" => StatusCode::FORBIDDEN,
         "input_conflict" => StatusCode::CONFLICT,
         "not_found" => StatusCode::NOT_FOUND,
         "unavailable" => StatusCode::SERVICE_UNAVAILABLE,
@@ -247,11 +257,13 @@ async fn secrets_are_revealed_once_and_revocation_is_immediate() {
         .unwrap();
     assert_ne!(stored.get::<String, _>("digest"), secret);
     assert!(stored.get::<Option<String>, _>("public_key").is_none());
-    let mutation: Value = sqlx::query_scalar("SELECT response FROM admin_mutations WHERE key=$1")
-        .bind(&key)
-        .fetch_one(&f.app.db)
-        .await
-        .unwrap();
+    let mutation: Value =
+        sqlx::query_scalar("SELECT response FROM admin_mutations WHERE key=$1 AND actor_id=$2")
+            .bind(&key)
+            .bind(&f.actor_id)
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
     assert_eq!(mutation, json!({"credential_id":id}));
     let list = f.list().await;
     assert!(!list.to_string().contains(secret));
@@ -269,7 +281,7 @@ async fn secrets_are_revealed_once_and_revocation_is_immediate() {
     let revoke_key = unique();
     let revoked = f.revoke(id, &revoke_key).await;
     assert!(revoked["revoked_at"].is_i64());
-    assert_eq!(revoked["revoked_by"], "administrator");
+    assert_eq!(revoked["revoked_by"], f.actor_id);
     assert_eq!(f.revoke(id, &revoke_key).await, revoked);
     assert_eq!(f.revoke(id, &unique()).await, revoked);
     f.authenticate("server", secret, "unauthenticated").await;
@@ -406,7 +418,7 @@ async fn credential_mutations_validate_boundaries_and_fail_closed_without_databa
             .header("cookie", &f.cookie)
             .header("idempotency-key", unique())
             .json(&input),
-        "forbidden",
+        "csrf_failed",
     )
     .await;
     error(

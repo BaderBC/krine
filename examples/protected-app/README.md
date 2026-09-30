@@ -12,7 +12,7 @@ From the repository root, with Docker Compose 2.24.4 or newer:
 ./scripts/up.sh --local --example
 ```
 
-Open **http://127.0.0.1:8080** and sign in with `deploy/secrets/admin_password`. Review and publish `can_claim_trial` using the policy below. Open **http://localhost:3000** for Draftroom. Read the generated account passwords locally:
+Open **http://127.0.0.1:8080**. On first use, enroll a named Admin with `deploy/secrets/admin_password` and save the generated credential. Sign in with that named operator. Review and publish `can_claim_trial` using the policy below. Open **http://localhost:3000** for Draftroom. Read the generated account passwords locally:
 
 ```sh
 docker compose --env-file deploy/example/local.env.example -f compose.yaml -f compose.app.yaml -f compose.example.yaml exec --user 10001:10001 example cat /var/lib/draftroom/accounts.json

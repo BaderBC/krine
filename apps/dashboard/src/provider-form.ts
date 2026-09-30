@@ -1,3 +1,4 @@
+import { validOptionalActor } from "./ActorAttribution";
 import { checkPath } from "./addresses";
 import { api, ApiError, definitiveMutationFailure, mutation } from "./api";
 import type { Mutation } from "./api";
@@ -57,7 +58,7 @@ function message(error: unknown): string {
       error.code === "dependent_checks"
     )
       return "The affected published checks changed. Review their current policies before saving.";
-    if (error.status === 401 || error.status === 403)
+    if (error.status === 401)
       return "Sign in again, then retry. Your entered configuration remains here.";
     if (error.status === 400 || error.status === 422)
       return "The configuration or its test was rejected. Check the entered values and test again.";
@@ -75,6 +76,7 @@ function validProvider(value: unknown): value is Provider {
       provider.provider === "turnstile") ||
       (provider.capability === "ip_intelligence" &&
         provider.provider === "proxycheck")) &&
+    validOptionalActor(provider.created_by) &&
     typeof provider.enabled === "boolean" &&
     Number.isSafeInteger(provider.revision) &&
     provider.revision >= 0 &&
@@ -411,7 +413,7 @@ export class ProviderForm {
       this.update({
         phase: "idle",
         error:
-          cause instanceof ApiError && [401, 403].includes(cause.status)
+          cause instanceof ApiError && cause.status === 401
             ? "Sign in again, then retry this same save. Its original configuration remains here."
             : certain
               ? message(cause)
@@ -530,6 +532,7 @@ export class ProviderForm {
   }
   dispose() {
     this.alive = false;
+    this.state = { ...this.state, fields: fields(this.state.server), pending: null, test: null, review: null };
     ++this.generation;
     this.listeners.clear();
   }

@@ -221,10 +221,8 @@ async fn security_authentication_query_aliases_and_forged_cursors() {
             .status(),
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    sqlx::query("DELETE FROM admin_sessions")
-        .execute(&f.app.db)
-        .await
-        .unwrap();
+    let signed_out = f.admin(Method::DELETE, "/session").send().await.unwrap();
+    assert_eq!(signed_out.status(), StatusCode::NO_CONTENT);
     assert_eq!(
         timeline(&f, &f.url, at).send().await.unwrap().status(),
         StatusCode::UNAUTHORIZED

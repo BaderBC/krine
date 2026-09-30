@@ -227,7 +227,7 @@ async fn acknowledge(app: &App, ids: &[String], revisions: &[i64]) -> Result<()>
         .bind(util::now()).bind(ids).bind(revisions).execute(&app.db).await?;
     Ok(())
 }
-async fn cleanup(app: &App) -> Result<()> {
+pub(crate) async fn cleanup(app: &App) -> Result<()> {
     let cutoff = util::now() - 172_800_000;
     // Never remove unexported envelopes. Retry guards outlive their supported
     // windows; analytical retention belongs to ClickHouse rather than PG.
@@ -252,16 +252,13 @@ async fn cleanup(app: &App) -> Result<()> {
         .bind(cutoff)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM admin_sessions WHERE expires_at<$1")
-        .bind(util::now())
-        .execute(&mut *tx)
-        .await?;
     sqlx::query("DELETE FROM observed_ips WHERE last_seen<$1 AND NOT has_corrections")
         .bind(util::now() - 2_592_000_000_i64)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(())
+    // Release receipt/test locks before independent access cleanup.
+    crate::operators::cleanup(app).await
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

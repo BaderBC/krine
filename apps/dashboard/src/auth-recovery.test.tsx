@@ -1,3 +1,4 @@
+import { methodsFixture, sessionFixture } from "./operator-test-fixtures";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -54,7 +55,7 @@ afterEach(() => {
   api.csrf = "";
 });
 
-it.each([401, 403])(
+it.each([401])(
   "recovers a committed provider save after %i through the mounted reauthentication dialog",
   async (status) => {
     const user = userEvent.setup();
@@ -62,8 +63,10 @@ it.each([401, 403])(
     const puts: RequestInit[] = [];
     const fetcher = vi.fn(async (url: string, init: RequestInit) => {
       const path = url.replace("/v1/admin", "");
+      if (path === "/auth/methods") return json(methodsFixture);
       if (path === "/session")
         return json({
+          ...sessionFixture(),
           csrf_token: init.method === "POST" ? "renewed_csrf" : "expired_csrf",
           expires_at: Date.now() + 60_000,
         });
@@ -144,7 +147,7 @@ it.each([401, 403])(
     expect(screen.queryByLabelText("Secret key")).toBeNull();
     const dialog = screen.getByRole("dialog");
     await user.type(
-      within(dialog).getByLabelText("Administrator password"),
+      within(dialog).getByLabelText("Sign-in credential"),
       "fixture_admin_password",
     );
     await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
@@ -174,7 +177,7 @@ it.each([401, 403])(
   },
 );
 
-it.each([401, 403])(
+it.each([401])(
   "opens in-place reauthentication even when a %i error body is unreadable",
   async (status) => {
     vi.stubGlobal(
@@ -201,14 +204,19 @@ it.each([
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(body)));
     const transport = new Api();
     transport.csrf = "known_csrf";
-    await expect(transport.session("fixture_password")).rejects.toMatchObject({
+    await expect(
+      transport.session({
+        sign_in_name: "fixture",
+        credential: "fixture_password",
+      }),
+    ).rejects.toMatchObject({
       code: "invalid_response",
     });
     expect(transport.csrf).toBe("known_csrf");
   },
 );
 
-it.each([401, 403])(
+it.each([401])(
   "recovers credential creation after a malformed committed response and %i without losing its original request",
   async (status) => {
     const user = userEvent.setup();
@@ -227,8 +235,10 @@ it.each([401, 403])(
       "fetch",
       vi.fn(async (url: string, init: RequestInit) => {
         const path = url.replace("/v1/admin", "");
+        if (path === "/auth/methods") return json(methodsFixture);
         if (path === "/session")
           return json({
+            ...sessionFixture(),
             csrf_token:
               init.method === "POST" ? "renewed_csrf" : "original_csrf",
             expires_at: Date.now() + 60_000,
@@ -301,7 +311,7 @@ it.each([401, 403])(
     expect(document.querySelector("#credentials")).toBe(panel);
     const dialog = screen.getByRole("dialog");
     await user.type(
-      within(dialog).getByLabelText("Administrator password"),
+      within(dialog).getByLabelText("Sign-in credential"),
       "fixture_admin_password",
     );
     await user.click(within(dialog).getByRole("button", { name: "Sign in" }));

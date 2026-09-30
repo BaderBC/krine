@@ -16,10 +16,12 @@ mod history;
 mod installation;
 mod investigation;
 mod json;
+mod operators;
 mod projection;
 mod provider_http;
 mod providers;
 mod query;
+pub mod recovery;
 mod relationships;
 mod retention;
 mod util;
@@ -67,7 +69,7 @@ impl App {
             .acquire_timeout(Duration::from_secs(2))
             .after_connect(|connection, _| {
                 Box::pin(async move {
-                    sqlx::query("SET krine.writer_generation='5'")
+                    sqlx::query("SET krine.writer_generation='6'")
                         .execute(&mut *connection)
                         .await?;
                     sqlx::query("SET statement_timeout='3s'")
@@ -91,7 +93,7 @@ impl App {
             sqlx::migrate!("../../migrations")
                 .run_direct(&mut *connection)
                 .await?;
-            sqlx::query("SET krine.writer_generation='5'")
+            sqlx::query("SET krine.writer_generation='6'")
                 .execute(&mut *connection)
                 .await?;
         }
@@ -103,6 +105,9 @@ impl App {
         if incomplete_demo {
             return Err(error::IncompleteDemoImport.into());
         }
+        operators::configure(&db, &config)
+            .await
+            .map_err(|_| "Could not initialize operator access")?;
         history::configure_retention(&db, config.history_retention_days)
             .await
             .map_err(|_| "Could not configure analytical retention")?;
@@ -138,6 +143,7 @@ impl App {
 pub fn router(app: App) -> Router {
     Router::new()
         .merge(addressing::routes())
+        .merge(operators::routes())
         .route("/health/live", get(|| async { "ok" }))
         .route("/health/ready", get(ready))
         .route("/v1/browser/context", post(browser::context))
@@ -243,6 +249,7 @@ struct ProviderTest {
     lose_cleanup_ack: bool,
     after_verification: Option<std::sync::Arc<VerificationPause>>,
     after_export: Option<std::sync::Arc<VerificationPause>>,
+    after_operator_provider_test: Option<std::sync::Arc<VerificationPause>>,
 }
 
 #[cfg(test)]

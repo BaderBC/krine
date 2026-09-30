@@ -1,5 +1,7 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -160,7 +162,7 @@ function mount(
 }
 describe("provider configuration interface", () => {
   it("keeps the integration tutorial collapsed and preserves the return to the policy draft", async () => {
-    sessionStorage.setItem("krine:draft:can_claim", "existing recovery");
+    operatorStorage.setItem("krine:draft:can_claim", "existing recovery");
     mount();
     await screen.findByLabelText("Site key");
     expect(
@@ -172,7 +174,7 @@ describe("provider configuration interface", () => {
         .getByRole("link", { name: "Return to policy draft · can_claim" })
         .getAttribute("href"),
     ).toBe("/inspect/check?name=can_claim&view=draft");
-    expect(sessionStorage.getItem("krine:draft:can_claim")).toBe(
+    expect(operatorStorage.getItem("krine:draft:can_claim")).toBe(
       "existing recovery",
     );
   });
@@ -313,4 +315,124 @@ describe("provider configuration interface", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Site key"));
     expect(api.run).not.toHaveBeenCalled();
   });
+});
+
+it("shows the captured provider configuration actor without querying operator administration", async () => {
+  current.created_by = {
+    id: "op_config",
+    type: "operator",
+    name: "Alex Configurator",
+  };
+  const router = createMemoryRouter(
+    [{ path: "/settings", element: <Settings /> }],
+    { initialEntries: ["/settings?provider=verification#providers"] },
+  );
+  render(<RouterProvider router={router} />);
+  await screen.findByText(/Alex Configurator/);
+  expect(screen.getByText("(op_config)")).toBeTruthy();
+  expect(
+    vi
+      .mocked(api.get)
+      .mock.calls.some(([path]) => path.startsWith("/operators")),
+  ).toBe(false);
+});
+
+it("QA: a Settings tab cannot discard an ambiguous secret-bearing provider save", async () => {
+  const user = userEvent.setup();
+  const router = mount();
+  await user.type(await screen.findByLabelText("Secret key"), "qa_memory_only_candidate");
+  await user.click(screen.getByRole("button", { name: "Test configuration" }));
+  await user.click(await screen.findByRole("button", { name: "Review and save" }));
+  await screen.findByRole("button", { name: "Save configuration" });
+  vi.mocked(api.run).mockRejectedValueOnce(new ApiError(0, "connection_failed", "lost"));
+  await user.click(screen.getByRole("button", { name: "Save configuration" }));
+  await screen.findByRole("button", { name: "Retry same save" });
+  const original = vi.mocked(api.run).mock.calls.at(-1)![0];
+  expect(original.body).toMatchObject({ config: { secret: "qa_memory_only_candidate" } });
+  await user.click(screen.getByRole("link", { name: "Operators" }));
+  expect(router.state.location.search).toBe("?provider=verification&check=can_claim");
+  expect(screen.getByText("A provider save is unconfirmed.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Discard and leave" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Stay with configuration" }));
+  await user.click(screen.getByRole("button", { name: "Retry same save" }));
+  await screen.findByText("Configuration saved for new attempts.");
+  expect(vi.mocked(api.run).mock.calls.at(-1)![0]).toEqual(original);
+});
+
+it("preserves an ambiguous provider save through same-Application query navigation and Back", async () => {
+  const user = userEvent.setup();
+  const router = mount();
+  await user.type(
+    await screen.findByLabelText("Secret key"),
+    "memory_only_retry",
+  );
+  await user.click(screen.getByRole("button", { name: "Test configuration" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Review and save" }),
+  );
+  await screen.findByRole("button", { name: "Save configuration" });
+  vi.mocked(api.run).mockRejectedValueOnce(
+    new ApiError(0, "connection_failed", "Response lost"),
+  );
+  await user.click(screen.getByRole("button", { name: "Save configuration" }));
+  await screen.findByRole("button", { name: "Retry same save" });
+  const original = vi.mocked(api.run).mock.calls.at(-1)![0];
+  await act(async () => {
+    await router.navigate(
+      "/settings?view=connection&provider=verification&check=can_claim&credential_q=Application#providers",
+    );
+  });
+  expect(router.state.location.search).toContain("credential_q=Application");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry same save" })).toBeTruthy();
+  await act(async () => {
+    await router.navigate(-1);
+  });
+  expect(router.state.location.search).toBe(
+    "?provider=verification&check=can_claim",
+  );
+  expect(screen.getByRole("button", { name: "Retry same save" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Retry same save" }));
+  await screen.findByText("Configuration saved for new attempts.");
+  expect(vi.mocked(api.run).mock.calls.at(-1)![0]).toEqual(original);
+});
+
+it("a provider acknowledgement closes its navigation guard without following an earlier departure", async () => {
+  const user = userEvent.setup();
+  const router = mount();
+  await user.type(
+    await screen.findByLabelText("Secret key"),
+    "reviewed_candidate",
+  );
+  await user.click(screen.getByRole("button", { name: "Test configuration" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Review and save" }),
+  );
+  await screen.findByRole("button", { name: "Save configuration" });
+  const implementation = vi.mocked(api.run).getMockImplementation()!;
+  let release!: () => Promise<void>;
+  vi.mocked(api.run).mockImplementationOnce(
+    (operation) =>
+      new Promise((resolve) => {
+        release = async () => {
+          resolve(await implementation(operation));
+        };
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save configuration" }));
+  await user.click(screen.getByRole("link", { name: "Operators" }));
+  expect(
+    screen.getByRole("dialog", { name: "A provider save is unconfirmed." }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Discard and leave" }),
+  ).toBeNull();
+  await act(async () => {
+    await release();
+  });
+  await screen.findByText("Configuration saved for new attempts.");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(router.state.location.search).toBe(
+    "?provider=verification&check=can_claim",
+  );
 });

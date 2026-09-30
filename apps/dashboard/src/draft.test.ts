@@ -1,3 +1,5 @@
+import { authenticateFixture } from "./operator-test-fixtures";
+import { operatorStorage } from "./operator-test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Api, ApiError, mutation } from "./api";
 import type { Mutation } from "./api";
@@ -25,7 +27,7 @@ beforeEach(() => {
 
 describe("draft persistence", () => {
   it("recognizes already-saved recovery and reverting a local edit without an unnecessary request", () => {
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:draft:can_claim_trial",
       JSON.stringify({
         revision: 2,
@@ -196,6 +198,7 @@ describe("admin transport", () => {
       .mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetcher);
     const api = new Api();
+    authenticateFixture(api);
     api.csrf = "session-csrf";
     const operation = mutation("/session", {}, "DELETE");
     await expect(api.run(operation)).resolves.toBeUndefined();
@@ -222,6 +225,7 @@ describe("admin transport", () => {
       ),
     );
     const api = new Api();
+    authenticateFixture(api);
     const expired = vi.fn();
     api.onUnauthorized = expired;
     await expect(api.get("/checks")).rejects.toMatchObject({
@@ -253,7 +257,7 @@ describe("publication and restoration recovery", () => {
       { ...initial, active_version: 2 },
       sessionStorage,
     );
-    expect(reopened.state.action?.status).toBe("recovering");
+    expect(reopened.state.action?.status).toBe("failed");
     await reopened.retryAction();
     expect(replay.mock.calls[0]![0]).toEqual(first.mock.calls[0]![0]);
     expect(replay.mock.calls[0]![0].body).toEqual({
@@ -263,7 +267,7 @@ describe("publication and restoration recovery", () => {
     expect(reopened.state.policy.otherwise).toBe("ALLOW");
     expect(reopened.state.description).toBe("newer local draft");
     expect(reopened.state.server.active_version).toBe(2);
-    expect(sessionStorage.getItem("krine:draft:can_claim_trial")).toContain(
+    expect(operatorStorage.getItem("krine:draft:can_claim_trial")).toContain(
       "newer local draft",
     );
   });
@@ -279,13 +283,11 @@ describe("publication and restoration recovery", () => {
     await original.restore(1);
     original.edit({ ...deny, otherwise: "ALLOW" }, "newer work");
     original.dispose();
-    const replay = vi
-      .fn()
-      .mockResolvedValue({
-        ...initial,
-        draft_revision: 4,
-        description: "saved restoration",
-      });
+    const replay = vi.fn().mockResolvedValue({
+      ...initial,
+      draft_revision: 4,
+      description: "saved restoration",
+    });
     const reopened = new DraftController(
       { run: replay },
       initial,
@@ -309,13 +311,11 @@ describe("publication and restoration recovery", () => {
     original.edit({ ...deny, otherwise: "ALLOW" });
     await original.save();
     original.dispose();
-    const replay = vi
-      .fn()
-      .mockResolvedValue({
-        ...initial,
-        draft_revision: 4,
-        draft: { ...deny, otherwise: "ALLOW" },
-      });
+    const replay = vi.fn().mockResolvedValue({
+      ...initial,
+      draft_revision: 4,
+      draft: { ...deny, otherwise: "ALLOW" },
+    });
     const reopened = new DraftController(
       { run: replay },
       { ...initial, draft_revision: 5, description: "Another editor's draft" },
@@ -329,7 +329,7 @@ describe("publication and restoration recovery", () => {
     expect(replay).toHaveBeenCalledTimes(1);
   });
   it("rejects a stored intent copied from another check or an arbitrary request endpoint", async () => {
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:draft:can_claim_trial",
       JSON.stringify({
         check: "another_check",
@@ -349,7 +349,7 @@ describe("publication and restoration recovery", () => {
     await model.retryAction();
     expect(run).not.toHaveBeenCalled();
     expect(model.state.error).toContain("could not be read");
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:draft:can_claim_trial",
       JSON.stringify({
         check: initial.name,
@@ -401,10 +401,10 @@ describe("publication and restoration recovery", () => {
     );
     await rejected.save();
     rejected.reconcile(initial, false);
-    expect(sessionStorage.getItem("krine:draft:can_claim_trial")).toBeNull();
+    expect(operatorStorage.getItem("krine:draft:can_claim_trial")).toBeNull();
     fail(new ApiError(503, "unavailable", "Unavailable"));
     await saving;
-    expect(sessionStorage.getItem("krine:draft:can_claim_trial")).toBeNull();
+    expect(operatorStorage.getItem("krine:draft:can_claim_trial")).toBeNull();
     newer.dispose();
   });
 });

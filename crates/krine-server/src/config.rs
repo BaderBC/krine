@@ -1,6 +1,7 @@
 use ipnet::IpNet;
 use std::{env, net::SocketAddr, path::PathBuf};
 
+#[derive(Clone)]
 pub struct Config {
     pub bind: SocketAddr,
     pub database_url: String,
@@ -11,6 +12,7 @@ pub struct Config {
     pub public_key: String,
     pub server_secret: String,
     pub admin_password: String,
+    pub local_sign_in: bool,
     pub public_url: String,
     pub admin_origin: String,
     pub allowed_origins: Vec<String>,
@@ -47,6 +49,11 @@ impl Config {
             public_key: required("KRINE_PUBLIC_KEY")?,
             server_secret: required("KRINE_SERVER_SECRET")?,
             admin_password: required("KRINE_ADMIN_PASSWORD")?,
+            local_sign_in: match env::var("KRINE_LOCAL_SIGN_IN").as_deref() {
+                Ok("false") => false,
+                Ok("true") | Err(_) => true,
+                _ => return Err("KRINE_LOCAL_SIGN_IN must be true or false".into()),
+            },
             public_url,
             admin_origin,
             allowed_origins,

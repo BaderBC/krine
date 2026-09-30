@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Api } from "./api";
 import { readPolicy, readPolicyResponse } from "./policy-response";
+import { authenticateFixture } from "./operator-test-fixtures";
 
 const legacy = {
   schema_version: 1,
@@ -149,10 +150,13 @@ describe("policy wire compatibility", () => {
   });
 
   it("an invalid successful acknowledgement retains the original mutation for retry", async () => {
+    const client = new Api();
+    authenticateFixture(client);
     const request = {
       path: "/lookup/checks/draft?name=trial",
       method: "PUT" as const,
       key: "original-key",
+      owner: client.requireOwner(),
       body: { revision: 2, description: "Original", policy: legacy },
     };
     const fetch = vi
@@ -161,7 +165,7 @@ describe("policy wire compatibility", () => {
         new Response(JSON.stringify({ draft: { ...legacy, inputs: null } })),
       );
     vi.stubGlobal("fetch", fetch);
-    await expect(new Api().run(request)).rejects.toMatchObject({
+    await expect(client.run(request)).rejects.toMatchObject({
       status: 200,
       code: "invalid_response",
     });

@@ -148,7 +148,7 @@ class Fixture:
         return self.run("exec", "-T", "postgres", "sh", "-c",
                         'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql '
                         '-h 127.0.0.1 -U krine -d krine -Atq -v ON_ERROR_STOP=1',
-                        input=query, capture_output=True).stdout.strip()
+                        input="SET krine.writer_generation='6';\n" + query, capture_output=True).stdout.strip()
 
     def ch(self, query, body=""):
         return self.run("exec", "-T", "clickhouse", "sh", "-c",
@@ -316,7 +316,8 @@ def assert_event_count(metric, events, ip):
 def verify_restored(g, target, expected):
     request, base, auth = g["request"], g["krine"], {"Authorization": "Bearer " + g["server_secret"]}
     operator = g["client"]()
-    request(operator, base, "/v1/admin/session", {"password": (g["secrets"] / "admin_password").read_text().strip()})
+    request(g["operator"], base, "/v1/admin/session", expected=401)
+    g["authenticate"](lambda path, data=None: request(operator, base, path, data), g["secrets"])
     require(request(operator, base, "/v1/admin/credentials") == expected["credentials"], "Credential metadata changed on restore.")
     # No provider token is submitted: this proves durable pending recovery, not
     # live provider pairing or successful challenge verification.
@@ -490,6 +491,16 @@ def execute(args, workspace):
             docker("exec", "-i", target.ids["postgres"], "sh", "-c",
                    'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec pg_restore -h 127.0.0.1 -U krine -d krine '
                    '--no-owner --no-acl --single-transaction --exit-on-error', stdin=archive)
+        # A restored backup must not reopen old browser sessions or recovery grants.
+        # This fixture restores its latest stopped boundary; no later offboarding
+        # exists to reconcile. Real recovery must reconcile changes since its RPO.
+        target.sql("BEGIN; SELECT singleton FROM operator_access WHERE singleton FOR UPDATE; "
+                   "UPDATE operator_sessions SET revoked_at=COALESCE(revoked_at,(extract(epoch FROM clock_timestamp())*1000)::bigint); "
+                   "UPDATE operator_recovery_grants SET revoked_at=COALESCE(revoked_at,(extract(epoch FROM clock_timestamp())*1000)::bigint); "
+                   "INSERT INTO administrative_audit(id,at,actor_id,actor_type,actor_name,action,resource_type,resource_id,reason,changes) "
+                   "VALUES('aud_'||replace(gen_random_uuid()::text,'-',''),(extract(epoch FROM clock_timestamp())*1000)::bigint,"
+                   "'installation_configuration','installation_configuration','Installation configuration','recovery.restore',"
+                   "'installation','operator_access','Isolated stopped-boundary restore','{}'); COMMIT;")
         target.run("up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180")
         target.refresh()
         require({service: inspect("container", target.ids[service])["Image"] for service in SERVICES} == actual_images,

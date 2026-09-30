@@ -1,3 +1,4 @@
+import { ActorAttribution } from "./ActorAttribution";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CredentialForm, validCredential, validLabel } from "./credential-form";
@@ -553,12 +554,11 @@ export function Credentials({
                       {item.id}
                     </p>
                     <p className="help">
-                      Created <Time at={item.created_at} />.
+                      Created <Time at={item.created_at} /> · <ActorAttribution value={item.created_by} />
                     </p>
                     {item.revoked_at !== null && (
                       <p className="help">
-                        Revoked <Time at={item.revoked_at} /> by the
-                        administrator.
+                        Revoked <Time at={item.revoked_at} /> · <ActorAttribution value={item.revocation_actor} legacy={item.revoked_by} />
                       </p>
                     )}
                   </details>

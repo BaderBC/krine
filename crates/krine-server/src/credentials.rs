@@ -3,6 +3,7 @@ use crate::{
     config::Config,
     error::{ApiError, Result},
     json::StrictJson,
+    operators::{Audit, Capability},
     util,
 };
 use axum::{
@@ -107,9 +108,12 @@ fn detail(row: &sqlx::postgres::PgRow) -> Value {
         "created_at": row.get::<i64, _>("created_at"),
         "revoked_at": row.get::<Option<i64>, _>("revoked_at"),
         "revoked_by": row.get::<Option<String>, _>("revoked_by"),
+        "created_by":row.get::<Option<Value>,_>("created_by"),
+        "revocation_actor":row.get::<Option<Value>,_>("revocation_actor"),
     })
 }
-const COLUMNS: &str = "id,kind,label,source,public_key,created_at,revoked_at,revoked_by";
+const COLUMNS: &str =
+    "id,kind,label,source,public_key,created_at,revoked_at,revoked_by,created_by,revocation_actor";
 
 pub async fn list(
     State(app): State<App>,
@@ -170,8 +174,14 @@ pub async fn create(
             "A label must contain 1–128 bytes without control characters or surrounding whitespace.",
         ));
     }
-    let (mut tx, key, digest, replay) =
-        admin::mutation(&app, &headers, "credentials", &json!(input)).await?;
+    let (mut tx, receipt, replay) = admin::mutation(
+        &app,
+        &headers,
+        "credentials",
+        &json!(input),
+        Capability::Administer,
+    )
+    .await?;
     if let Some(replay) = replay {
         let id = replay["credential_id"]
             .as_str()
@@ -194,7 +204,7 @@ pub async fn create(
     });
     let id = util::token("cred_");
     let row = sqlx::query(&format!(
-        "INSERT INTO application_credentials(id,kind,label,source,digest,public_key,created_at) VALUES($1,$2,$3,'administrator',$4,$5,$6) RETURNING {COLUMNS}"
+        "INSERT INTO application_credentials(id,kind,label,source,digest,public_key,created_at,created_by) VALUES($1,$2,$3,'administrator',$4,$5,$6,$7) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(input.kind.as_str())
@@ -202,11 +212,18 @@ pub async fn create(
     .bind(util::digest(&value))
     .bind(matches!(input.kind, Kind::Browser).then_some(&value))
     .bind(util::now())
+    .bind(receipt.actor.identity())
     .fetch_one(&mut *tx)
     .await?;
     // Commit only a reference for retries. A response lost after this commit
     // cannot reveal the server secret again, even to the original administrator.
-    let _ = admin::finish(tx, key, digest, json!({"credential_id":id})).await?;
+    let _ = admin::finish(
+        tx,
+        receipt,
+        json!({"credential_id":id}),
+        Audit::new("credential.create", "credential", &id).changes(json!({"kind":input.kind})),
+    )
+    .await?;
     Ok(Json(json!({
         "credential": detail(&row),
         "secret": matches!(input.kind, Kind::Server).then_some(value),
@@ -224,25 +241,47 @@ pub async fn revoke(
     StrictJson(input): StrictJson<Revoke>,
 ) -> Result<Json<Value>> {
     util::identifier(&id)?;
-    let (mut tx, key, digest, replay) = admin::mutation(
+    let (mut tx, receipt, replay) = admin::mutation(
         &app,
         &headers,
         &format!("credentials/{id}/revocations"),
         &json!(input),
+        Capability::Administer,
     )
     .await?;
     if let Some(response) = replay {
         return Ok(Json(response));
     }
-    let row = sqlx::query(&format!(
-        "UPDATE application_credentials SET revoked_at=COALESCE(revoked_at,$1),revoked_by='administrator' WHERE id=$2 RETURNING {COLUMNS}"
+    let previous = sqlx::query(&format!(
+        "SELECT {COLUMNS} FROM application_credentials WHERE id=$1 FOR UPDATE"
     ))
-    .bind(util::now())
-    .bind(id)
+    .bind(&id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(ApiError::absent)?;
-    admin::finish(tx, key, digest, detail(&row)).await
+    // The row lock makes the original effect and a later confirmation distinct,
+    // even for different actors/keys. Historical null attribution stays null.
+    let (row, action) = if previous.get::<Option<i64>, _>("revoked_at").is_some() {
+        (previous, "credential.revocation_confirmed")
+    } else {
+        let row = sqlx::query(&format!(
+            "UPDATE application_credentials SET revoked_at=$1,revoked_by=$3,revocation_actor=$4 WHERE id=$2 RETURNING {COLUMNS}"
+        ))
+        .bind(util::now())
+        .bind(&id)
+        .bind(&receipt.actor.actor_id)
+        .bind(receipt.actor.identity())
+        .fetch_one(&mut *tx)
+        .await?;
+        (row, "credential.revoke")
+    };
+    admin::finish(
+        tx,
+        receipt,
+        detail(&row),
+        Audit::new(action, "credential", id),
+    )
+    .await
 }
 
 pub(crate) async fn setup(app: &App) -> Result<Value> {

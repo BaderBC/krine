@@ -18,6 +18,7 @@ struct Fixture {
     server: tokio::task::JoinHandle<()>,
     cookie: String,
     csrf: String,
+    actor_id: String,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -71,10 +72,17 @@ impl Fixture {
             .timeout(Duration::from_secs(12))
             .build()
             .unwrap();
+        let enrollment=http.post(format!("{url}/v1/admin/auth/bootstrap"))
+            .header("origin",&app.config.admin_origin)
+            .json(&json!({"installation_secret":app.config.admin_password,"sign_in_name":"fixture","name":"Fixture operator"}))
+            .send().await.unwrap();
+        assert_eq!(enrollment.status(), StatusCode::OK);
+        let enrollment: Value = enrollment.json().await.unwrap();
+        let actor_id = enrollment["operator"]["id"].as_str().unwrap().to_owned();
         let response = http
             .post(format!("{url}/v1/admin/session"))
             .header("origin", &app.config.admin_origin)
-            .json(&json!({"password":app.config.admin_password}))
+            .json(&json!({"sign_in_name":"fixture","credential":enrollment["credential"]}))
             .send()
             .await
             .unwrap();
@@ -99,6 +107,7 @@ impl Fixture {
             server,
             cookie,
             csrf,
+            actor_id,
         }
     }
     fn admin(&self, method: Method, path: &str, key: &str) -> RequestBuilder {
@@ -107,6 +116,7 @@ impl Fixture {
             .header("origin", &self.app.config.admin_origin)
             .header("cookie", &self.cookie)
             .header("x-csrf-token", &self.csrf)
+            .header("x-krine-operator-id", &self.actor_id)
             .header("idempotency-key", key)
     }
     fn backend(&self, path: &str) -> RequestBuilder {
@@ -309,7 +319,7 @@ async fn correction_changes_new_checks_but_preserves_historical_context_and_retr
     );
     let detail = f.relationship("backend", id).await;
     assert_eq!(detail["audit"]["items"].as_array().unwrap().len(), 2);
-    assert_eq!(detail["audit"]["items"][0]["actor"], "administrator");
+    assert_eq!(detail["audit"]["items"][0]["actor"], f.actor_id);
     // Original time survives restoration: old assertions remain outside 30 days.
     sqlx::query("UPDATE associations SET created_at=$2 WHERE id=$1")
         .bind(id)
@@ -485,7 +495,7 @@ async fn mutation_boundaries_retries_and_concurrent_snapshots_are_coherent() {
             .header("x-csrf-token", "wrong")
             .json(&json!({"revision":1,"reason":"x"})),
         StatusCode::FORBIDDEN,
-        "forbidden",
+        "csrf_failed",
     )
     .await;
     let other = f.context().await;
@@ -690,9 +700,9 @@ async fn migration_preserves_unknown_provenance_and_legacy_digest_while_fencing_
         "INSERT INTO associations(id,digest,client_id,user_id,metadata,created_at) VALUES('old','x','legacy_client','legacy_user','{}',1)",
     ] {
         let error = sqlx::query(statement).execute(&mut *old).await.unwrap_err();
-        assert!(error.to_string().contains("generation 5"));
+        assert!(error.to_string().contains("generation 6"));
     }
-    sqlx::query("SET krine.writer_generation='5'")
+    sqlx::query("SET krine.writer_generation='6'")
         .execute(&mut *old)
         .await
         .unwrap();

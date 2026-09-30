@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import {
@@ -69,7 +70,7 @@ describe("reviewed relationship request recovery", () => {
       const intent = client.run.mock.calls[0]![0];
       expect(intent.body).toEqual({ revision: 1, reason: "Wrong account" });
       expect(
-        sessionStorage.getItem("krine:relationship-mutation:v1"),
+        operatorStorage.getItem("krine:relationship-mutation:v1"),
       ).not.toContain("not needed in recovery");
       model.dispose();
       const recovered = new RelationshipForm(client);
@@ -145,7 +146,7 @@ describe("reviewed relationship request recovery", () => {
     const client = {
       run: vi.fn().mockImplementation(() => {
         expect(
-          JSON.parse(sessionStorage.getItem("krine:relationship-mutation:v1")!)
+          JSON.parse(operatorStorage.getItem("krine:relationship-mutation:v1")!)
             .operation.body,
         ).toEqual({ revision: 1, reason: "Wrong account" });
         return new Promise((resolve) => {
@@ -206,10 +207,10 @@ describe("reviewed relationship request recovery", () => {
       "Wrong account",
     );
     const saved = JSON.parse(
-      sessionStorage.getItem("krine:relationship-mutation:v1")!,
+      operatorStorage.getItem("krine:relationship-mutation:v1")!,
     );
     saved.operation.path = "/credentials";
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:relationship-mutation:v1",
       JSON.stringify(saved),
     );
@@ -227,9 +228,9 @@ describe("reviewed relationship request recovery", () => {
       const model = new RelationshipForm(client);
       await model.submit(observed, "correct", "Wrong observation");
       const key = "krine:relationship-mutation:v1";
-      const saved = JSON.parse(sessionStorage.getItem(key)!);
+      const saved = JSON.parse(operatorStorage.getItem(key)!);
       saved.relationship[field] = [saved.relationship[field]];
-      sessionStorage.setItem(key, JSON.stringify(saved));
+      operatorStorage.setItem(key, JSON.stringify(saved));
       model.dispose();
       const recovered = new RelationshipForm(client);
       await recovered.retry();
@@ -324,10 +325,10 @@ it.each(["correct", "restore"] as const)(
       "Reviewed original evidence",
     );
     const stored = JSON.parse(
-      sessionStorage.getItem("krine:relationship-mutation:v1")!,
+      operatorStorage.getItem("krine:relationship-mutation:v1")!,
     );
     stored.operation.path = `/relationships/backend/association_one/${action === "correct" ? "corrections" : "restorations"}`;
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:relationship-mutation:v1",
       JSON.stringify(stored),
     );

@@ -1,3 +1,7 @@
+import { validOptionalActor } from "./ActorAttribution";
+import { ownedStorage, sameOwner, validOwner } from "./operator";
+import type { IntentOwner } from "./operator";
+import { api as currentApi } from "./api";
 import { checkPath } from "./addresses";
 import { ApiError, definitiveMutationFailure, errorMessage } from "./api";
 import type { Api, Mutation } from "./api";
@@ -5,7 +9,7 @@ import type { Check, Policy, Version } from "./types";
 import { policyError, sameJson } from "./policy";
 
 type Document = { policy: Policy; description: string };
-type Intent = { address?: "query" } & (
+type Intent = { owner: IntentOwner; address?: "query" } & (
   | { kind: "save"; key: string; revision: number; document: Document }
   | {
       kind: "publish";
@@ -139,6 +143,8 @@ function validIntent(value: unknown): value is Intent {
   if (!value || typeof value !== "object") return false;
   const intent = value as Intent;
   if (
+    !validOwner(intent.owner) ||
+    !sameOwner(intent.owner, currentApi.owner()) ||
     typeof intent.key !== "string" ||
     !/^[a-zA-Z0-9_.:-]{1,128}$/.test(intent.key) ||
     !integer(intent.revision) ||
@@ -168,6 +174,7 @@ function validAcknowledgement(
   if (intent.kind === "publish") {
     const version = value as Version;
     return (
+      validOptionalActor(version.published_by) &&
       integer(version.version) &&
       version.version > (intent.expected_active_version ?? 0) &&
       integer(version.published_at) &&
@@ -207,6 +214,10 @@ export class DraftController {
     check: Check,
     private storage?: Storage,
   ) {
+    if (storage) {
+      this.storage = ownedStorage(storage, currentApi.requireOwner());
+      storage = this.storage;
+    }
     this.storageKey = `krine:draft:${check.name}`;
     if (storage) {
       if (!recoveryOwners.has(storage)) recoveryOwners.set(storage, new Map());
@@ -252,16 +263,27 @@ export class DraftController {
             ...this.state,
             policy: recovery.policy,
             description: recovery.description,
-            status: alreadySaved ? "saved" : conflict ? "conflict" : "changed",
-            error: conflict
-              ? "The shared draft changed while you were away. Your local work is preserved. Compare drafts before saving."
-              : null,
+            status:
+              this.intent?.kind === "save"
+                ? "failed"
+                : alreadySaved
+                  ? "saved"
+                  : conflict
+                    ? "conflict"
+                    : "changed",
+            error:
+              this.intent?.kind === "save"
+                ? "An earlier save is unconfirmed. Retry that exact request deliberately before saving new edits."
+                : conflict
+                  ? "The shared draft changed while you were away. Your local work is preserved. Compare drafts before saving."
+                  : null,
             action:
               this.intent && this.intent.kind !== "save"
                 ? {
                     kind: this.intent.kind,
-                    status: "recovering",
-                    error: null,
+                    status: "failed",
+                    error:
+                      "An earlier request is unconfirmed. Retry it deliberately to recover its result.",
                     revision: this.intent.revision,
                   }
                 : null,
@@ -349,6 +371,7 @@ export class DraftController {
     const intent = this.intent ?? {
       kind: "save",
       address: "query" as const,
+      owner: currentApi.requireOwner(),
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       document: {
@@ -364,6 +387,7 @@ export class DraftController {
     return this.execute({
       kind: "publish",
       address: "query",
+      owner: currentApi.requireOwner(),
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       expected_active_version: this.state.server.active_version,
@@ -374,6 +398,7 @@ export class DraftController {
     return this.execute({
       kind: "restore",
       address: "query",
+      owner: currentApi.requireOwner(),
       key: crypto.randomUUID(),
       revision: this.state.server.draft_revision,
       version,
@@ -398,6 +423,7 @@ export class DraftController {
           body: { revision: intent.revision, ...intent.document },
           method: "PUT",
           key: intent.key,
+          owner: intent.owner,
         }
       : intent.kind === "publish"
         ? {
@@ -408,6 +434,7 @@ export class DraftController {
             },
             method: "POST",
             key: intent.key,
+            owner: intent.owner,
           }
         : {
             path: path("/restorations"),
@@ -418,6 +445,7 @@ export class DraftController {
             },
             method: "POST",
             key: intent.key,
+            owner: intent.owner,
           };
   }
   private execute(intent: Intent): Promise<Check | Version | undefined> {

@@ -15,6 +15,24 @@ async fn main() {
 }
 async fn run() -> Result<(), String> {
     let config = Config::load()?;
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if !arguments.is_empty() {
+        if arguments.len() != 7
+            || arguments[0] != "operator-recovery"
+            || arguments[1] != "--installation-id"
+            || arguments[3] != "--output"
+            || arguments[5] != "--reason"
+        {
+            return Err("Usage: krine-server operator-recovery --installation-id ID --output NEW_PRIVATE_FILE --reason REASON".into());
+        }
+        return krine_server::recovery::arm(
+            config,
+            &arguments[2],
+            std::path::Path::new(&arguments[4]),
+            &arguments[6],
+        )
+        .await;
+    }
     let bind = config.bind;
     let app = App::connect(config)
         .await

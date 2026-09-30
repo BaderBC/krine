@@ -35,11 +35,13 @@ async fn legacy_policy_defaults_survive_reads_saves_restoration_and_replay() {
         ] {
             let version = json_ok(fixture.admin(Method::GET, &suffix)).await;
             assert_eq!(version["policy"], canonical);
+            assert_eq!(version["published_by"], Value::Null);
         }
         let versions =
             json_ok(fixture.admin(Method::GET, &format!("/lookup/checks/versions?name={name}")))
                 .await;
         assert_eq!(versions["items"][0]["policy"], canonical);
+        assert_eq!(versions["items"][0]["published_by"], Value::Null);
         let key = unique();
         let payload = json!({"revision":1,"description":"Description only","policy":canonical});
         let saved = json_ok(
@@ -66,6 +68,31 @@ async fn legacy_policy_defaults_survive_reads_saves_restoration_and_replay() {
                     .json(&payload)
             )
             .await
+        );
+        let receipt = sqlx::query("SELECT actor_id,response FROM admin_mutations WHERE key=$1")
+            .bind(&key)
+            .fetch_one(&fixture.app.db)
+            .await
+            .unwrap();
+        assert_eq!(receipt.get::<String, _>("actor_id"), fixture.actor_id);
+        assert_eq!(receipt.get::<Value, _>("response"), saved);
+        let audits = sqlx::query(
+            "SELECT actor_id,action,changes FROM administrative_audit WHERE mutation_key=$1",
+        )
+        .bind(&key)
+        .fetch_all(&fixture.app.db)
+        .await
+        .unwrap();
+        assert_eq!(
+            audits.len(),
+            1,
+            "Receipt replay must not append another audit"
+        );
+        assert_eq!(audits[0].get::<String, _>("actor_id"), fixture.actor_id);
+        assert_eq!(audits[0].get::<String, _>("action"), "check.draft");
+        assert_eq!(
+            audits[0].get::<Value, _>("changes"),
+            json!({"previous_revision":1,"revision":2})
         );
         let summary = json_ok(fixture.admin(Method::GET, &format!("/checks?q={name}"))).await;
         assert_eq!(summary["items"][0]["has_draft_changes"], false);
@@ -144,10 +171,12 @@ async fn malformed_stored_policy_is_unavailable_without_history_or_draft_changes
             let response = fixture.admin(Method::GET, &path).send().await.unwrap();
             assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
         }
+        let key = unique();
         let restored = fixture
-            .admin(
+            .admin_key(
                 Method::POST,
                 &format!("/lookup/checks/restorations?name={name}"),
+                &key,
             )
             .json(&json!({"revision":1,"version":1,"replace_draft":true}))
             .send()
@@ -161,6 +190,12 @@ async fn malformed_stored_policy_is_unavailable_without_history_or_draft_changes
             .unwrap();
         assert_eq!(row.get::<i64, _>("draft_revision"), 1);
         assert_eq!(row.get::<Value, _>("draft"), json!({"schema_version":1}));
+        let effects: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM admin_mutations WHERE key=$1)+(SELECT count(*) FROM administrative_audit WHERE mutation_key=$1)")
+            .bind(&key).fetch_one(&fixture.app.db).await.unwrap();
+        assert_eq!(
+            effects, 0,
+            "Invalid stored policy must roll back receipt and audit with the draft"
+        );
     }
     fixture.finish().await;
 }

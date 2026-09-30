@@ -287,3 +287,47 @@ it("rejects repeated canonical check selectors without reading either target", a
       .mock.calls.every(([path]) => path.startsWith("/metrics")),
   ).toBe(true);
 });
+
+it("shows captured publication attribution and honest legacy fallback in version details", async () => {
+  vi.spyOn(api, "get").mockImplementation(async (path) => {
+    if (path.startsWith("/metrics"))
+      return { items: [], next_cursor: null } as never;
+    if (path.includes("/versions?"))
+      return {
+        items: [
+          {
+            version: 2,
+            published_at: 1,
+            policy,
+            published_by: {
+              id: "op_publisher",
+              type: "operator",
+              name: "Alex Publisher",
+            },
+          },
+          { version: 1, published_at: 1, policy, published_by: null },
+        ],
+        next_cursor: null,
+      } as never;
+    if (path.includes("/versions/"))
+      return {
+        version: 2,
+        published_at: 1,
+        policy,
+        published_by: {
+          id: "op_publisher",
+          type: "operator",
+          name: "Alex Publisher",
+        },
+      } as never;
+    return initial as never;
+  });
+  const router = createMemoryRouter(
+    [{ path: "/checks/:name", element: <CheckPage /> }],
+    { initialEntries: ["/checks/can_claim_trial"] },
+  );
+  render(<RouterProvider router={router} />);
+  await screen.findAllByText(/Published by Alex Publisher/);
+  expect(screen.getAllByText("(op_publisher)").length).toBeGreaterThan(0);
+  expect(screen.getByText(/Actor not recorded/)).toBeTruthy();
+});

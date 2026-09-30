@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import socket
 import subprocess
+from operator_auth import authenticate
 import tempfile
 import time
 import urllib.error
@@ -48,8 +49,11 @@ def api(base, state, manifest, completed_at):
             return error.code, None
 
     demo.require(request("/v1/admin/installation")[0] == 401, "Installation context leaked without authentication")
-    secret = demo.read_file(Path(state["secrets"]) / "admin_password", 128).decode().strip()
-    demo.require(request("/v1/admin/session", {"password": secret})[0] == 200, "Demo operator login failed")
+    def operator_request(path, body=None):
+        status, value = request(path, body)
+        demo.require(status == 200, "Demo named-operator request failed: " + path)
+        return value
+    authenticate(operator_request, Path(state["secrets"]))
     status, installation = request("/v1/admin/installation")
     marker = installation["sample_data"] if status == 200 else None
     demo.require(marker and marker["dataset_id"] == manifest["dataset_id"] and marker["generator_version"] == manifest["configuration"]["generator_version"]

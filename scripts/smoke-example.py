@@ -2,6 +2,7 @@
 """Exercise the actual local ingress; creates policy only in a disposable test project."""
 import concurrent.futures
 import http.client
+from operator_auth import authenticate
 import http.cookiejar
 import ipaddress
 import json
@@ -143,11 +144,13 @@ def request(http, base, path, data=None, headers=None, method=None, expected=200
 
 
 operator = client()
-csrf = request(operator, krine, "/v1/admin/session", {"password": (secrets / "admin_password").read_text().strip()})["csrf_token"]
+operator_session = authenticate(lambda path, data=None: request(operator, krine, path, data), secrets)
+csrf = operator_session["csrf_token"]
+actor_id = operator_session["actor_id"]
 
 
 def mutation(path, data, method=None):
-    return request(operator, krine, path, data, {"X-CSRF-Token": csrf, "Idempotency-Key": str(uuid.uuid4())}, method)
+    return request(operator, krine, path, data, {"X-Krine-Operator-ID": actor_id, "X-CSRF-Token": csrf, "Idempotency-Key": str(uuid.uuid4())}, method)
 
 
 # Refuse to change an existing check: this harness is for a new disposable installation.

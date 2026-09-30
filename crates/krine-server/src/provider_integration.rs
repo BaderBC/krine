@@ -34,6 +34,7 @@ struct Fixture {
     url: String,
     cookie: String,
     csrf: String,
+    actor_id: String,
     schema: String,
     admin: PgPool,
     server: tokio::task::JoinHandle<()>,
@@ -112,10 +113,17 @@ impl Fixture {
             .timeout(Duration::from_secs(12))
             .build()
             .unwrap();
+        let enrollment=http.post(format!("{url}/v1/admin/auth/bootstrap"))
+            .header("origin",&app.config.admin_origin)
+            .json(&json!({"installation_secret":app.config.admin_password,"sign_in_name":"fixture","name":"Fixture operator"}))
+            .send().await.unwrap();
+        assert_eq!(enrollment.status(), StatusCode::OK);
+        let enrollment: Value = enrollment.json().await.unwrap();
+        let actor_id = enrollment["operator"]["id"].as_str().unwrap().to_owned();
         let login = http
             .post(format!("{url}/v1/admin/session"))
             .header("origin", &app.config.admin_origin)
-            .json(&json!({"password":app.config.admin_password}))
+            .json(&json!({"sign_in_name":"fixture","credential":enrollment["credential"]}))
             .send()
             .await
             .unwrap();
@@ -137,6 +145,7 @@ impl Fixture {
             url,
             cookie,
             csrf,
+            actor_id,
             schema,
             admin,
             server,
@@ -187,6 +196,7 @@ impl Fixture {
             .header("origin", &self.app.config.admin_origin)
             .header("cookie", &self.cookie)
             .header("x-csrf-token", &self.csrf)
+            .header("x-krine-operator-id", &self.actor_id)
             .header("idempotency-key", key)
     }
     fn backend(&self, input: &Value) -> RequestBuilder {
@@ -632,7 +642,7 @@ async fn provider_races_crash_recovery_fencing_and_expiry() {
             .await
             .unwrap_err();
     assert!(error.to_string().contains("stop the old server"));
-    sqlx::query("SET krine.writer_generation='5'")
+    sqlx::query("SET krine.writer_generation='6'")
         .execute(&mut *legacy)
         .await
         .unwrap();
@@ -1396,7 +1406,7 @@ async fn provider_coalescing_migration_preserves_latest_revision_and_restarts() 
     assert!(
         incompatible
             .to_string()
-            .contains("generation 5; stop the old server")
+            .contains("generation 6; stop the old server")
     );
     old.close().await;
     app.db.close().await;
@@ -1562,3 +1572,5 @@ mod investigation_tests;
 
 #[path = "investigation_security_regressions.rs"]
 mod investigation_security_regressions;
+#[path = "operator_integration.rs"]
+mod operator_access;

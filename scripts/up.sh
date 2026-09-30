@@ -33,7 +33,7 @@ docker compose "$@" build
 if "$example"; then docker compose "$@" stop example-ingress example; fi
 docker compose "$@" stop app
 docker compose "$@" up -d --wait --wait-timeout 180
-printf 'Krine is ready at %s. Sign in with the admin_password secret.\n' "$public_url"
+printf 'Krine is ready at %s. For first use, enroll a named Admin with admin_password and save its generated credential; otherwise use your individual sign-in.\n' "$public_url"
 if "$example"; then
     printf 'Draftroom is ready at http://localhost:%s. Review and publish can_claim_trial before requesting a trial.\n' "$example_port"
     printf 'Read examples/protected-app/README.md for account passwords and the policy walkthrough.\n'

@@ -1,3 +1,5 @@
+import { ActorAttribution } from "./ActorAttribution";
+import { useAccess } from "./access";
 import {
   useCallback,
   useEffect,
@@ -262,6 +264,7 @@ export function Relationships({
   refreshEntity: () => Promise<void>;
 }) {
   const [params, setParams] = useSearchParams();
+  const { can } = useAccess();
   const [model] = useState(() => new RelationshipForm());
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot);
   const [review, setReview] = useState<{
@@ -654,7 +657,7 @@ export function Relationships({
               </div>
             </Notice>
           )}
-          {reviewed && action ? (
+          {reviewed && action && !can("edit") ? <Notice>An earlier relationship change remains unconfirmed. Your current role can inspect its evidence and audit, but cannot retry the mutation.</Notice> : reviewed && action ? (
             <section
               className="review"
               aria-labelledby="relationship-review-heading"
@@ -769,7 +772,8 @@ export function Relationships({
               )}
             </section>
           ) : (
-            current && (
+            current &&
+            can("edit") && (
               <button disabled={!readable || state.busy} onClick={beginReview}>
                 {current.revoked_at === null
                   ? "Correct relationship"
@@ -791,7 +795,7 @@ export function Relationships({
                           : audit.action === "restore"
                             ? "Restored"
                             : audit.action}{" "}
-                        · {audit.actor ?? "Actor not recorded"}
+                        · <ActorAttribution value={audit.actor_identity} legacy={audit.actor} />
                         {audit.revision !== null
                           ? ` · Revision ${audit.revision}`
                           : " · Revision not recorded"}

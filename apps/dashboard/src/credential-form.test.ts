@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import { CredentialForm } from "./credential-form";
@@ -74,7 +75,7 @@ describe("credential mutation recovery", () => {
     let finish!: (value: unknown) => void;
     const api = client();
     api.run.mockImplementation(() => {
-      expect(sessionStorage.getItem("krine:credential-mutation:v1")).toContain(
+      expect(operatorStorage.getItem("krine:credential-mutation:v1")).toContain(
         '"label":"Application"',
       );
       return new Promise((resolve) => {
@@ -187,10 +188,10 @@ describe("credential mutation recovery", () => {
     const form = new CredentialForm(api);
     await form.create("server", "Application");
     const text = JSON.parse(
-      sessionStorage.getItem("krine:credential-mutation:v1")!,
+      operatorStorage.getItem("krine:credential-mutation:v1")!,
     );
     text.startedAt = Date.now() - 24 * 60 * 60 * 1000;
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:credential-mutation:v1",
       JSON.stringify(text),
     );
@@ -202,7 +203,7 @@ describe("credential mutation recovery", () => {
     expect(reopened.getSnapshot().pending).toBeNull();
   });
   it("rejects recovery records aimed at other admin endpoints", () => {
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       "krine:credential-mutation:v1",
       JSON.stringify({
         operation: {
@@ -270,7 +271,7 @@ it("does not reconcile unrelated IDs into a pending creation or repeatedly updat
   const form = new CredentialForm(api);
   const sending = form.create("server", "Application");
   const pending = form.getSnapshot().pending;
-  const persisted = sessionStorage.getItem("krine:credential-mutation:v1");
+  const persisted = operatorStorage.getItem("krine:credential-mutation:v1");
   const unrelated: Credential = {
     ...server,
     id: "cred_unrelated",
@@ -279,7 +280,7 @@ it("does not reconcile unrelated IDs into a pending creation or repeatedly updat
   };
   form.observe([unrelated]);
   expect(form.getSnapshot().pending).toBe(pending);
-  expect(sessionStorage.getItem("krine:credential-mutation:v1")).toBe(
+  expect(operatorStorage.getItem("krine:credential-mutation:v1")).toBe(
     persisted,
   );
   finish(revealed);
@@ -296,4 +297,14 @@ it("does not reconcile unrelated IDs into a pending creation or repeatedly updat
   form.observe([{ ...server, revoked_at: 345, revoked_by: "administrator" }]);
   expect(changed).toHaveBeenCalledTimes(1);
   expect(form.getSnapshot().result?.secret).toBeNull();
+});
+
+it("clears a revealed application secret when the actor view is disposed", async () => {
+  const transport = client();
+  transport.run.mockResolvedValue(revealed);
+  const form = new CredentialForm(transport);
+  await form.create("server", "Application");
+  expect(form.getSnapshot().result?.secret).toBe(secret);
+  form.dispose();
+  expect(form.getSnapshot().result).toBeNull();
 });

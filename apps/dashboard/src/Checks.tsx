@@ -1,3 +1,5 @@
+import { ActorAttribution } from "./ActorAttribution";
+import { useAccess } from "./access";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { FormEvent } from "react";
 import {
@@ -7,7 +9,13 @@ import {
   useLocation,
   useSearchParams,
 } from "react-router-dom";
-import { ApiError, api, encode, errorMessage, mutation } from "./api";
+import {
+  api,
+  encode,
+  errorMessage,
+  mutation,
+  definitiveMutationFailure,
+} from "./api";
 import type { Mutation } from "./api";
 import {
   checkPath,
@@ -35,6 +43,7 @@ import {
 import type { Check, CheckSummary, Metric, Page, Version } from "./types";
 
 export function Checks() {
+  const { can } = useAccess();
   const [params, setParams] = useSearchParams();
   const resource = useResource<Page<CheckSummary>>(`/checks?${params}`);
   const [creating, setCreating] = useState(false);
@@ -70,12 +79,7 @@ export function Checks() {
       pending.current = null;
       navigate(`${checkUrl(check.name)}&view=draft`);
     } catch (cause) {
-      if (
-        cause instanceof ApiError &&
-        cause.status >= 400 &&
-        cause.status < 500
-      )
-        pending.current = null;
+      if (definitiveMutationFailure(cause)) pending.current = null;
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
@@ -84,11 +88,13 @@ export function Checks() {
   return (
     <>
       <PageTitle title="Checks">
-        <button className="primary" onClick={() => setCreating(true)}>
-          Create check
-        </button>
+        {can("edit") && (
+          <button className="primary" onClick={() => setCreating(true)}>
+            Create check
+          </button>
+        )}
       </PageTitle>
-      {creating && (
+      {can("edit") && creating && (
         <form className="create-check" onSubmit={(event) => void create(event)}>
           <label>
             Check name
@@ -220,6 +226,8 @@ function CheckWorkspace({
   initial: Check;
   metrics: Metric[];
 }) {
+  const { can, suspended } = useAccess();
+  const editable = can("edit");
   const [params, setParams] = useSearchParams();
   const origin = useActivityOrigin();
   const [model] = useState(() => {
@@ -288,14 +296,13 @@ function CheckWorkspace({
     }
   });
   useEffect(() => {
-    if (draft.action?.status === "recovering") {
-      void model.retryAction();
-      return;
-    }
+    if (!editable || suspended) return;
     if (draft.status !== "changed" || invalid || model.pendingAction) return;
     const timer = setTimeout(() => void model.save(), 700);
     return () => clearTimeout(timer);
   }, [
+    editable,
+    suspended,
     draft.policy,
     draft.description,
     draft.status,
@@ -370,25 +377,26 @@ function CheckWorkspace({
           </>
         }
       >
-        {editing ? (
-          <button
-            className="primary"
-            disabled={!canReview || busy || review}
-            onClick={() => {
-              setReview(true);
-              setError(null);
-            }}
-          >
-            Review and publish
-          </button>
-        ) : (
-          <Link
-            className="button primary"
-            to={`?${changeSearch(params, { view: "draft", version: null })}`}
-          >
-            Edit {historical ? "current " : ""}policy
-          </Link>
-        )}
+        {editable &&
+          (editing ? (
+            <button
+              className="primary"
+              disabled={!canReview || busy || review}
+              onClick={() => {
+                setReview(true);
+                setError(null);
+              }}
+            >
+              Review and publish
+            </button>
+          ) : (
+            <Link
+              className="button primary"
+              to={`?${changeSearch(params, { view: "draft", version: null })}`}
+            >
+              Edit {historical ? "current " : ""}policy
+            </Link>
+          ))}
       </PageTitle>
       <div className="check-context">
         <p>
@@ -400,7 +408,7 @@ function CheckWorkspace({
               </span>
             )}
           {editing
-            ? `Editing draft · ${draft.server.active_version === null ? "Unpublished" : `Active v${draft.server.active_version}`}`
+            ? `${editable ? "Editing" : "Read-only"} draft · ${draft.server.active_version === null ? "Unpublished" : `Active v${draft.server.active_version}`}`
             : `Policy v${selectedVersion}${historical ? " · Read-only version" : " · Active"}`}
         </p>
         <div className="actions">
@@ -422,7 +430,7 @@ function CheckWorkspace({
         <Notice>
           {draft.action.error ??
             `${draft.action.status === "recovering" ? "Recovering" : "Completing"} the earlier ${draft.action.kind === "publish" ? "publication" : "restoration"} of draft revision ${draft.action.revision}. Newer local edits are preserved and are not included in that request.`}
-          {draft.action.status === "failed" && model.pendingAction && (
+          {editable && draft.action.status === "failed" && model.pendingAction && (
             <button onClick={() => void model.retryAction()}>
               Retry{" "}
               {draft.action.kind === "publish" ? "publication" : "restoration"}
@@ -493,7 +501,15 @@ function CheckWorkspace({
           </div>
         </section>
       )}
-      {editing ? (
+      {editing && !editable ? (
+        <>
+          <p className="help">
+            Your role can inspect this draft. An Editor or Admin can change and
+            publish it.
+          </p>
+          <PolicyRead policy={draft.policy} />
+        </>
+      ) : editing ? (
         <>
           {review ? (
             <section className="review">
@@ -600,8 +616,9 @@ function CheckWorkspace({
         </>
       ) : selected ? (
         <>
+          <p className="help">Published by <ActorAttribution value={selected.published_by} />.</p>
           <PolicyRead policy={selected.policy} />
-          {historical && (
+          {historical && editable && (
             <button
               disabled={
                 draft.status === "saving" || busy || model.pendingAction
@@ -658,7 +675,7 @@ function CheckWorkspace({
                       ? " · Active"
                       : ""}
                   </Link>
-                  <Time at={version.published_at} />
+                  <span><Time at={version.published_at} /><span className="receipt-basis">Published by <ActorAttribution value={version.published_by} /></span></span>
                 </li>
               ))}
             </ul>

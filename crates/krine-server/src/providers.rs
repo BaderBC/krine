@@ -1,3 +1,4 @@
+use crate::operators::{Audit, Capability};
 use crate::{
     App, admin,
     error::{ApiError, Result},
@@ -176,10 +177,10 @@ async fn summary(tx: &mut Transaction<'_, Postgres>, capability: &str) -> Result
     let dependent_checks = dependents(tx, capability).await?;
     Ok(match row {
         Some(row) => {
-            json!({"capability":capability,"provider":provider(capability)?,"revision":current,"enabled":row.get::<bool,_>("enabled"),"config":row.get::<Value,_>("config"),"has_secret":row.get::<Option<String>,_>("secret").is_some(),"status":row.get::<String,_>("status"),"message":row.get::<String,_>("message"),"checked_at":row.get::<Option<i64>,_>("checked_at"),"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token})
+            json!({"capability":capability,"provider":provider(capability)?,"revision":current,"enabled":row.get::<bool,_>("enabled"),"created_by":row.get::<Option<Value>,_>("created_by"),"config":row.get::<Value,_>("config"),"has_secret":row.get::<Option<String>,_>("secret").is_some(),"status":row.get::<String,_>("status"),"message":row.get::<String,_>("message"),"checked_at":row.get::<Option<i64>,_>("checked_at"),"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token})
         }
         None => {
-            json!({"capability":capability,"provider":provider(capability)?,"revision":0,"enabled":false,"config":{},"has_secret":false,"status":"unconfigured","message":"Provider is not configured.","checked_at":null,"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token})
+            json!({"capability":capability,"provider":provider(capability)?,"revision":0,"enabled":false,"created_by":null,"config":{},"has_secret":false,"status":"unconfigured","message":"Provider is not configured.","checked_at":null,"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token})
         }
     })
 }
@@ -313,7 +314,8 @@ pub async fn test(
     StrictJson(input): StrictJson<Candidate>,
 ) -> Result<Json<Value>> {
     let path = format!("providers/{capability}/tests");
-    let (mut tx, _, _, replay) = admin::mutation(&app, &headers, &path, &json!(input)).await?;
+    let (mut tx, _, replay) =
+        admin::mutation(&app, &headers, &path, &json!(input), Capability::Administer).await?;
     if let Some(value) = replay {
         return Ok(Json(value));
     }
@@ -370,8 +372,13 @@ pub async fn test(
             ),
         }
     };
-    let (mut tx, key, digest, replay) =
-        admin::mutation(&app, &headers, &path, &json!(input)).await?;
+    #[cfg(test)]
+    if let Some(pause) = &app.provider_test.after_operator_provider_test {
+        pause.arrived.notify_one();
+        pause.resume.notified().await;
+    }
+    let (mut tx, receipt, replay) =
+        admin::mutation(&app, &headers, &path, &json!(input), Capability::Administer).await?;
     if let Some(value) = replay {
         return Ok(Json(value));
     }
@@ -382,10 +389,10 @@ pub async fn test(
     let now = util::now();
     let token = matches!(status, "ready" | "configuration_checked").then(|| util::token("pt_"));
     if let Some(token) = &token {
-        sqlx::query("INSERT INTO provider_tests(digest,capability,candidate_digest,revision,status,message,checked_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(util::digest(token)).bind(&capability).bind(candidate.digest).bind(input.revision).bind(status).bind(&message).bind(now).bind(now+600_000).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO provider_tests(digest,capability,candidate_digest,revision,status,message,checked_at,expires_at,actor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(util::digest(token)).bind(&capability).bind(candidate.digest).bind(input.revision).bind(status).bind(&message).bind(now).bind(now+600_000).bind(&receipt.actor.actor_id).execute(&mut *tx).await?;
     }
     let dependent_checks = dependents(&mut tx, &capability).await?;
-    admin::finish(tx,key,digest,json!({"status":status,"checked_at":now,"message":message,"test_token":token,"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token})).await
+    admin::finish(tx,receipt,json!({"status":status,"checked_at":now,"message":message,"test_token":token,"dependent_checks":dependent_checks.names,"dependent_versions":dependent_checks.versions,"dependents_token":dependent_checks.token}),Audit::new("provider.test","provider",&capability).changes(json!({"revision":input.revision,"status":status}))).await
 }
 pub async fn save(
     State(app): State<App>,
@@ -393,11 +400,12 @@ pub async fn save(
     headers: HeaderMap,
     StrictJson(input): StrictJson<Save>,
 ) -> Result<Json<Value>> {
-    let (mut tx, key, digest, replay) = admin::mutation(
+    let (mut tx, receipt, replay) = admin::mutation(
         &app,
         &headers,
         &format!("providers/{capability}"),
         &json!(input),
+        Capability::Administer,
     )
     .await?;
     if let Some(value) = replay {
@@ -424,7 +432,7 @@ pub async fn save(
             .as_deref()
             .filter(|v| v.len() <= 128)
             .ok_or_else(|| ApiError::invalid("A fresh matching provider test is required."))?;
-        let test=sqlx::query("SELECT status,message,checked_at FROM provider_tests WHERE digest=$1 AND capability=$2 AND candidate_digest=$3 AND revision=$4 AND expires_at>$5").bind(util::digest(token)).bind(&capability).bind(&candidate.digest).bind(input.revision).bind(util::now()).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::invalid("A fresh matching provider test is required."))?;
+        let test=sqlx::query("SELECT status,message,checked_at FROM provider_tests WHERE digest=$1 AND capability=$2 AND candidate_digest=$3 AND revision=$4 AND expires_at>$5 AND actor_id=$6").bind(util::digest(token)).bind(&capability).bind(&candidate.digest).bind(input.revision).bind(util::now()).bind(&receipt.actor.actor_id).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::invalid("A fresh matching provider test is required."))?;
         (
             test.get::<String, _>("status"),
             test.get::<String, _>("message"),
@@ -438,14 +446,22 @@ pub async fn save(
         )
     };
     let next = input.revision + 1;
-    sqlx::query("INSERT INTO provider_revisions(capability,revision,provider,enabled,config,secret,status,message,checked_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(&capability).bind(next).bind(&input.provider).bind(input.enabled).bind(candidate.config).bind(candidate.secret).bind(status).bind(message).bind(checked_at).bind(util::now()).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO provider_revisions(capability,revision,provider,enabled,config,secret,status,message,checked_at,created_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(&capability).bind(next).bind(&input.provider).bind(input.enabled).bind(candidate.config).bind(candidate.secret).bind(status).bind(message).bind(checked_at).bind(util::now()).bind(receipt.actor.identity()).execute(&mut *tx).await?;
     sqlx::query("UPDATE provider_current SET revision=$1 WHERE capability=$2")
         .bind(next)
         .bind(&capability)
         .execute(&mut *tx)
         .await?;
     let response = summary(&mut tx, &capability).await?;
-    admin::finish(tx, key, digest, response).await
+    admin::finish(
+        tx,
+        receipt,
+        response,
+        Audit::new("provider.save", "provider", capability).changes(
+            json!({"previous_revision":input.revision,"revision":next,"enabled":input.enabled}),
+        ),
+    )
+    .await
 }
 async fn lookup(app: &App, secret: Option<&str>, ip: IpAddr) -> IpObservation {
     #[cfg(test)]

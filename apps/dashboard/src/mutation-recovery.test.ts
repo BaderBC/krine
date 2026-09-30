@@ -1,3 +1,5 @@
+import { api } from "./api";
+import { operatorStorage } from "./operator-test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import { DraftController } from "./draft";
@@ -52,12 +54,12 @@ describe("durable mutation intent before acknowledgement", () => {
         const model = new DraftController({ run }, initial, sessionStorage);
         await submit(model, kind);
         const original = structuredClone(run.mock.calls[0]![0]);
-        const intent = JSON.parse(sessionStorage.getItem(storageKey)!).intent;
+        const intent = JSON.parse(operatorStorage.getItem(storageKey)!).intent;
         model.edit(deny, "new local work");
         await model.retryAction();
         expect(run.mock.calls[1]![0]).toEqual(original);
         expect(model.pending).toBe(true);
-        expect(JSON.parse(sessionStorage.getItem(storageKey)!).intent).toEqual(
+        expect(JSON.parse(operatorStorage.getItem(storageKey)!).intent).toEqual(
           intent,
         );
         model.dispose();
@@ -80,7 +82,7 @@ describe("durable mutation intent before acknowledgement", () => {
         expect(reopened.state.description).toBe("new local work");
         expect(reopened.state.policy).toEqual(deny);
         expect(
-          JSON.parse(sessionStorage.getItem(storageKey)!).intent,
+          JSON.parse(operatorStorage.getItem(storageKey)!).intent,
         ).toBeNull();
       },
     );
@@ -111,9 +113,9 @@ describe("durable mutation intent before acknowledgement", () => {
           kind === "save" ? model.state.status : model.state.action?.status,
         ).toBe("failed");
         const original = structuredClone(run.mock.calls[0]![0]);
-        expect(JSON.parse(sessionStorage.getItem(storageKey)!).intent.key).toBe(
-          original.key,
-        );
+        expect(
+          JSON.parse(operatorStorage.getItem(storageKey)!).intent.key,
+        ).toBe(original.key);
         model.dispose();
         const replay = vi.fn().mockResolvedValue(committed(kind));
         const reopened = new DraftController(
@@ -124,7 +126,7 @@ describe("durable mutation intent before acknowledgement", () => {
         await reopened.retryAction();
         expect(replay.mock.calls[0]![0]).toEqual(original);
         expect(reopened.pending).toBe(false);
-        expect(sessionStorage.getItem(storageKey)).toBeNull();
+        expect(operatorStorage.getItem(storageKey)).toBeNull();
       },
     );
   }
@@ -150,27 +152,35 @@ describe("durable mutation intent before acknowledgement", () => {
 });
 
 it.each(kinds)(
-  "preserves the exact legacy %s path, key and body after upgrade",
+  "preserves an actor-bound %s intent using a legacy address without rewriting its path",
   async (kind) => {
     const key = `legacy-${kind}`;
     const intent =
       kind === "save"
         ? {
             kind,
+            owner: api.requireOwner(),
             key,
             revision: 3,
             document: { policy: allow, description: "older request" },
           }
         : kind === "publish"
-          ? { kind, key, revision: 3, expected_active_version: 1 }
+          ? {
+              kind,
+              owner: api.requireOwner(),
+              key,
+              revision: 3,
+              expected_active_version: 1,
+            }
           : {
               kind,
+              owner: api.requireOwner(),
               key,
               revision: 3,
               version: 2,
               before: { policy: deny, description: "initial" },
             };
-    sessionStorage.setItem(
+    operatorStorage.setItem(
       storageKey,
       JSON.stringify({
         check: "recovery",
@@ -191,6 +201,7 @@ it.each(kinds)(
     );
     await reopened.retryAction();
     const expected = {
+      owner: api.requireOwner(),
       path: `/checks/recovery/${kind === "save" ? "draft" : kind === "publish" ? "publications" : "restorations"}`,
       method: kind === "save" ? "PUT" : "POST",
       key,
@@ -202,7 +213,7 @@ it.each(kinds)(
             : { revision: 3, version: 2, replace_draft: true },
     };
     expect(run.mock.calls[0]![0]).toEqual(expected);
-    expect(JSON.parse(sessionStorage.getItem(storageKey)!).intent).toEqual(
+    expect(JSON.parse(operatorStorage.getItem(storageKey)!).intent).toEqual(
       intent,
     );
     await reopened.retryAction();
@@ -216,7 +227,7 @@ it.each(kinds)(
     const dotCheck = { ...initial, name: ".." };
     const run = vi.fn().mockImplementation(async () => {
       expect(
-        JSON.parse(sessionStorage.getItem("krine:draft:..")!).intent.address,
+        JSON.parse(operatorStorage.getItem("krine:draft:..")!).intent.address,
       ).toBe("query");
       throw new ApiError(0, "lost", "Acknowledgement lost");
     });

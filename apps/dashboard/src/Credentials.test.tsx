@@ -1,3 +1,4 @@
+import { operatorStorage } from "./operator-test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -508,7 +509,7 @@ it.each([null, { allowed_origins: null, active_credentials: false }])(
       retry,
     );
     expect(retry.closest("details")).toBe(section);
-    expect(sessionStorage.getItem("krine:credential-mutation:v1")).toContain(
+    expect(operatorStorage.getItem("krine:credential-mutation:v1")).toContain(
       intent.key,
     );
     vi.mocked(api.run).mockResolvedValueOnce({
@@ -658,3 +659,114 @@ it.each(["retained page", "different search page", "stale active snapshot"])(
     expect(listReads).toBeLessThan(8);
   },
 );
+
+it("keeps named credential attribution separate from the legacy shared administrator", async () => {
+  records = [
+    {
+      ...initial,
+      id: "cred_named",
+      label: "Named credential",
+      created_by: { id: "op_creator", type: "operator", name: "Alex Creator" },
+      revoked_at: 5,
+      revoked_by: "op_reviewer",
+      revocation_actor: {
+        id: "op_reviewer",
+        type: "operator",
+        name: "Lee Reviewer",
+      },
+    },
+    {
+      ...initial,
+      id: "cred_legacy",
+      label: "Legacy credential",
+      revoked_at: 4,
+      revoked_by: "administrator",
+    },
+  ];
+  const router = createMemoryRouter(
+    [{ path: "/settings", element: <Settings /> }],
+    { initialEntries: ["/settings"] },
+  );
+  render(<RouterProvider router={router} />);
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByText("Application credentials", {
+        selector: "summary",
+      }),
+    );
+  await screen.findByText(/Alex Creator/);
+  expect(screen.getByText(/Lee Reviewer/)).toBeTruthy();
+  expect(screen.getByText(/Shared administrator \(legacy\)/)).toBeTruthy();
+});
+
+it("QA: a Settings tab requires confirmation before losing an unsaved server-secret reveal", async () => {
+  const router = mount();
+  const user = await createServer();
+  expect((await screen.findByLabelText("New server secret") as HTMLInputElement).value).toBe(secret);
+  await user.click(screen.getByRole("link", { name: "Your sessions" }));
+  expect(router.state.location.search).toBe("?check=can_claim");
+  expect(screen.getByText("Leave without this server secret?")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Stay with configuration" }));
+  expect((screen.getByLabelText("New server secret") as HTMLInputElement).value).toBe(secret);
+});
+
+it("keeps an unsaved secret through Application filters and their Back navigation", async () => {
+  const router = mount();
+  const user = await createServer();
+  await screen.findByLabelText("New server secret");
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search labels" }),
+    "Application",
+  );
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  expect(router.state.location.search).toContain("credential_q=Application");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByLabelText("New server secret")).toHaveProperty(
+    "value",
+    secret,
+  );
+  await act(async () => {
+    await router.navigate(-1);
+  });
+  expect(router.state.location.search).toBe("?check=can_claim");
+  expect(screen.getByLabelText("New server secret")).toHaveProperty(
+    "value",
+    secret,
+  );
+});
+
+it("blocks Back to another Settings surface until the server secret is acknowledged", async () => {
+  const router = createMemoryRouter(
+    [{ path: "/settings", element: <Settings /> }],
+    {
+      initialEntries: ["/settings?view=sessions", "/settings?check=can_claim"],
+      initialIndex: 1,
+    },
+  );
+  render(<RouterProvider router={router} />);
+  const user = await createServer();
+  await screen.findByLabelText("New server secret");
+  await act(async () => {
+    await router.navigate(-1);
+  });
+  expect(router.state.location.search).toBe("?check=can_claim");
+  expect(
+    screen.getByRole("dialog", { name: "Leave without this server secret?" }),
+  ).toBeTruthy();
+  await user.click(
+    screen.getByRole("button", { name: "Stay with configuration" }),
+  );
+  expect(screen.getByLabelText("New server secret")).toHaveProperty(
+    "value",
+    secret,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "I have saved the secret" }),
+  );
+  await act(async () => {
+    await router.navigate(-1);
+  });
+  expect(router.state.location.search).toBe("?view=sessions");
+  expect(screen.queryByLabelText("New server secret")).toBeNull();
+});

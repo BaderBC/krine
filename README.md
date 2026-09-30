@@ -27,7 +27,7 @@ cd krine
 ./scripts/up.sh --local
 ```
 
-Open [127.0.0.1:8080](http://127.0.0.1:8080). Sign in with the value in `deploy/secrets/admin_password`. The command builds the dashboard and Axum service in one image, generates independent credentials, starts PostgreSQL, ClickHouse and Valkey, and waits for readiness. Existing secrets and data survive subsequent runs. Set `KRINE_HTTP_PORT` to choose another loopback port.
+Open [127.0.0.1:8080](http://127.0.0.1:8080). On first use, enroll a named Admin using `deploy/secrets/admin_password`, save the generated credential, then sign in with that operator. The installation secret is for enrollment and host recovery, not daily sign-in. The command builds the dashboard and Axum service in one image, generates independent credentials, starts PostgreSQL, ClickHouse and Valkey, and waits for readiness. Existing secrets and data survive subsequent runs. Set `KRINE_HTTP_PORT` to choose another loopback port.
 
 Create a named check in **Checks**, edit its policy, and review it before publishing. The local preset permits browser participation from `http://localhost:3000`; set `KRINE_ALLOWED_ORIGINS` to your application's exact origin.
 

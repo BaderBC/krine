@@ -31,7 +31,8 @@ or logs.
 | `KRINE_CLICKHOUSE_PASSWORD` | ClickHouse password |
 | `KRINE_PUBLIC_KEY` | Browser key imported once on first startup; 16–512 printable ASCII bytes without spaces |
 | `KRINE_SERVER_SECRET` | Distinct server secret imported once on first startup; 32–512 printable ASCII bytes without spaces |
-| `KRINE_ADMIN_PASSWORD` | Operator password, at least 16 bytes |
+| `KRINE_ADMIN_PASSWORD` | Installation enrollment/recovery secret, at least 16 bytes; never a daily operator password |
+| `KRINE_LOCAL_SIGN_IN` | `true` by default; `false` is rejected until another eligible ordinary Admin sign-in method is supported |
 | `KRINE_PUBLIC_URL` | Exact external API origin, without trailing slash |
 | `KRINE_ADMIN_ORIGIN` | Exact dashboard origin; defaults to public URL |
 | `KRINE_ALLOWED_ORIGINS` | Comma-separated exact browser application origins |
@@ -41,7 +42,7 @@ or logs.
 | `KRINE_DEVELOPMENT` | Explicit `true` allows HTTP origins and non-Secure local cookies |
 | `KRINE_BROWSER_RATE_PER_MINUTE` | Browser requests per normalized source IP; defaults to 300 |
 | `KRINE_SERVER_RATE_PER_MINUTE` | Backend requests per installation; defaults to 3,000 |
-| `KRINE_LOGIN_RATE_PER_MINUTE` | Operator login attempts per source IP; defaults to 10 |
+| `KRINE_LOGIN_RATE_PER_MINUTE` | Operator login attempts per source IP and bounded account-key bucket; defaults to 10 |
 | `KRINE_HISTORY_RETENTION_DAYS` | Analytical history retention; defaults to 30, range 2–3650; all replicas must agree ([retention](deployment.md#analytical-retention)) |
 | `KRINE_MAX_PENDING_OUTBOX` | Delivery capacity including unfinished-attempt reservations; defaults to 1,000,000 records |
 
@@ -170,3 +171,49 @@ writer generation 5. Receipt markers commit with durable admission, survive
 analytical outages/expiry and distinguish tracking from retained upgrade history.
 Analytical retention is shared through PostgreSQL; changing it never alters metric
 windows or retry protection. See [ADR 0014](../decisions/0014-observed-connection-and-history.md).
+
+## Named access and host recovery
+
+The first startup or upgrade offers one named Admin enrollment. Use the
+installation secret, then save the generated individual credential. Enrollment
+returns no session; sign in by the new name and credential. The secret is revealed
+only once. Restarting, changing `KRINE_ADMIN_PASSWORD` or deleting a browser cookie
+does not repeat enrollment. Later operators and credential rotations belong in
+Settings. Local credential rotation, disable and role changes revoke sessions.
+Changing the host's installation secret also invalidates existing operator
+sessions and recovery grants; it never creates another first Admin.
+
+If no ordinary Admin can sign in, use the matching deployed binary and its
+existing private environment on the host. Confirm the installation ID from
+`GET /v1/admin/auth/methods`. The command below does not migrate the database or
+start an HTTP listener. Its output directory must already be owner-only (0700),
+and the output filename must not exist:
+
+```sh
+krine-server operator-recovery \
+  --installation-id installation_REVIEWED_ID \
+  --output /etc/krine/private/recovery-grant \
+  --reason 'Lost the individual administrator credential'
+```
+
+The command reads the installation secret from configuration and writes a
+single-use token only to the new mode-0600 file. Read it privately and enter it in
+the recovery sign-in form within 15 minutes. Never put it in shell arguments,
+logs or a URL. A successful redemption grants 30 minutes to restore named operator
+access and revoke sessions. It cannot inspect customer history or change checks,
+providers or application credentials. Arm another grant if the browser response
+is lost; this invalidates old recovery authority. A nonempty token file after a
+command error may reflect an uncertain database commit: redeem that token or
+explicitly arm a new grant, without overwriting the old file.
+
+Audit uses an independent 365-day retention window. It records operator changes,
+sign-in/out, check/provider/credential/relationship effects and host configuration
+changes. Reasons are operator-supplied administrative notes; do not enter secrets
+or customer property values. PostgreSQL/host administrators remain trusted; the
+audit is not an external tamper-proof log.
+
+Deployment verification helpers save their generated named credential in a
+private, installation-bound `verification_operator_<installation_id>.json` beside
+the deployment secrets. Repeated smoke/restart/restore checks reuse it. Preserve
+it with the fixture's other secrets; do not commit or print it. If enrollment was
+consumed and the file is lost, helpers stop and require deliberate recovery.

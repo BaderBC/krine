@@ -3,6 +3,7 @@ use crate::{
     auth::header,
     error::{ApiError, Result},
     json::StrictJson,
+    operators::{self, Audit, Capability, Identity},
     util,
 };
 use axum::{
@@ -127,57 +128,75 @@ pub async fn list_checks(
         .collect::<Result<Vec<_>>>()?;
     Ok(Json(json!({"items":items,"next_cursor":next})))
 }
+pub(crate) struct Receipt {
+    pub actor: operators::Admin,
+    key: String,
+    digest: String,
+}
 pub(crate) async fn mutation(
     app: &App,
     headers: &HeaderMap,
     path: &str,
     input: &Value,
-) -> Result<(
-    Transaction<'static, Postgres>,
-    String,
-    String,
-    Option<Value>,
-)> {
+    capability: Capability,
+) -> Result<(Transaction<'static, Postgres>, Receipt, Option<Value>)> {
+    mutation_with_gate(app, headers, path, input, capability, false).await
+}
+pub(crate) async fn mutation_with_gate(
+    app: &App,
+    headers: &HeaderMap,
+    path: &str,
+    input: &Value,
+    capability: Capability,
+    exclusive: bool,
+) -> Result<(Transaction<'static, Postgres>, Receipt, Option<Value>)> {
     let key = header(headers, "idempotency-key")
         .ok_or_else(|| ApiError::invalid("Idempotency-Key is required."))?
         .to_owned();
     util::identifier(&key)?;
     let digest = util::canonical_digest(&json!({"path":path,"input":input}));
     let mut tx = app.db.begin().await?;
+    operators::gate(&mut tx, exclusive).await?;
+    let actor = operators::authorize(&mut tx, headers, capability).await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-        .bind(format!("admin:{key}"))
+        .bind(format!("operator-mutation:{}:{key}", actor.actor_id))
         .execute(&mut *tx)
         .await?;
-    let prior = sqlx::query("SELECT digest,response,created_at FROM admin_mutations WHERE key=$1")
-        .bind(&key)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let prior = sqlx::query(
+        "SELECT digest,response,created_at FROM admin_mutations WHERE actor_id=$1 AND key=$2",
+    )
+    .bind(&actor.actor_id)
+    .bind(&key)
+    .fetch_optional(&mut *tx)
+    .await?;
     let response = if let Some(row) = prior {
         if row.get::<String, _>("digest") != digest {
             return Err(ApiError::conflict("input_conflict"));
         }
-        if util::now() > row.get::<i64, _>("created_at") + 86_400_000 {
+        if operators::now(&mut tx).await? > row.get::<i64, _>("created_at") + 86_400_000 {
             return Err(ApiError::invalid("The mutation retry window has expired."));
         }
         Some(row.get("response"))
     } else {
         None
     };
-    Ok((tx, key, digest, response))
+    Ok((tx, Receipt { actor, key, digest }, response))
 }
 pub(crate) async fn finish(
     mut tx: Transaction<'_, Postgres>,
-    key: String,
-    digest: String,
+    receipt: Receipt,
     response: Value,
+    audit: Audit,
 ) -> Result<Json<Value>> {
-    sqlx::query("INSERT INTO admin_mutations(key,digest,response,created_at) VALUES($1,$2,$3,$4)")
-        .bind(key)
-        .bind(digest)
-        .bind(&response)
-        .bind(util::now())
-        .execute(&mut *tx)
-        .await?;
+    operators::record(
+        &mut tx,
+        &Identity::from(&receipt.actor),
+        audit,
+        Some(&receipt.key),
+    )
+    .await?;
+    sqlx::query("INSERT INTO admin_mutations(actor_id,key,digest,response,created_at) VALUES($1,$2,$3,$4,(extract(epoch FROM clock_timestamp())*1000)::bigint)")
+        .bind(receipt.actor.actor_id).bind(receipt.key).bind(receipt.digest).bind(&response).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(response))
 }
@@ -195,13 +214,21 @@ pub async fn create_check(
 ) -> Result<Json<Value>> {
     util::identifier(&input.name)?;
     description(&input.description)?;
-    let (mut tx, key, digest, replay) = mutation(&app, &headers, "checks", &json!(input)).await?;
+    let (mut tx, receipt, replay) =
+        mutation(&app, &headers, "checks", &json!(input), Capability::Edit).await?;
     if let Some(v) = replay {
         return Ok(Json(v));
     }
     let now = util::now();
     let row=sqlx::query(&format!("INSERT INTO checks(name,description,draft,created_at,updated_at) VALUES($1,$2,$3,$4,$4) ON CONFLICT DO NOTHING RETURNING {CHECK_COLUMNS}")).bind(input.name).bind(input.description).bind(json!(Policy::default())).bind(now).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("input_conflict"))?;
-    finish(tx, key, digest, detail(&row)?).await
+    finish(
+        tx,
+        receipt,
+        detail(&row)?,
+        Audit::new("check.create", "check", row.get::<String, _>("name"))
+            .changes(json!({"revision":row.get::<i64,_>("draft_revision")})),
+    )
+    .await
 }
 fn description(text: &str) -> Result<()> {
     if text.len() > 1024 {
@@ -224,18 +251,19 @@ pub async fn save_draft(
 ) -> Result<Json<Value>> {
     description(&input.description)?;
     ValidatedPolicy::try_from(input.policy.clone())?;
-    let (mut tx, key, digest, replay) = mutation(
+    let (mut tx, receipt, replay) = mutation(
         &app,
         &headers,
         &format!("checks/{name}/draft"),
         &json!(input),
+        Capability::Edit,
     )
     .await?;
     if let Some(v) = replay {
         return Ok(Json(v));
     }
     let row=sqlx::query(&format!("UPDATE checks SET draft=$1,description=$2,draft_revision=draft_revision+1,updated_at=$3,restored_from_version=NULL WHERE name=$4 AND draft_revision=$5 RETURNING {CHECK_COLUMNS}")).bind(json!(input.policy)).bind(input.description).bind(util::now()).bind(name).bind(input.revision).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("revision_conflict"))?;
-    finish(tx, key, digest, detail(&row)?).await
+    finish(tx, receipt, detail(&row)?, Audit::new("check.draft","check",row.get::<String,_>("name")).changes(json!({"previous_revision":input.revision,"revision":row.get::<i64,_>("draft_revision")}))).await
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -249,11 +277,12 @@ pub async fn publish(
     headers: HeaderMap,
     StrictJson(input): StrictJson<Publication>,
 ) -> Result<Json<Value>> {
-    let (mut tx, key, digest, replay) = mutation(
+    let (mut tx, receipt, replay) = mutation(
         &app,
         &headers,
         &format!("checks/{name}/publications"),
         &json!(input),
+        Capability::Edit,
     )
     .await?;
     if let Some(v) = replay {
@@ -276,14 +305,15 @@ pub async fn publish(
     let version = row.get::<Option<i64>, _>("active_version").unwrap_or(0) + 1;
     let at = util::now();
     let restored = row.get::<Option<i64>, _>("restored_from_version");
-    sqlx::query("INSERT INTO policy_versions(check_name,version,policy,published_at,restored_from_version) VALUES($1,$2,$3,$4,$5)").bind(&name).bind(version).bind(json!(policy)).bind(at).bind(restored).execute(&mut *tx).await?;
+    let published_by = receipt.actor.identity();
+    sqlx::query("INSERT INTO policy_versions(check_name,version,policy,published_at,restored_from_version,published_by) VALUES($1,$2,$3,$4,$5,$6)").bind(&name).bind(version).bind(json!(policy)).bind(at).bind(restored).bind(&published_by).execute(&mut *tx).await?;
     sqlx::query("UPDATE checks SET active_version=$1,updated_at=$2 WHERE name=$3")
         .bind(version)
         .bind(at)
-        .bind(name)
+        .bind(&name)
         .execute(&mut *tx)
         .await?;
-    finish(tx,key,digest,json!({"version":version,"published_at":at,"policy":policy,"restored_from_version":restored})).await
+    finish(tx,receipt,json!({"version":version,"published_at":at,"policy":policy,"restored_from_version":restored,"published_by":published_by}),Audit::new("check.publish","check",name).changes(json!({"previous_version":input.expected_active_version,"version":version}))).await
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -301,11 +331,12 @@ pub async fn restore(
     if !input.replace_draft {
         return Err(ApiError::invalid("Draft replacement must be explicit."));
     }
-    let (mut tx, key, digest, replay) = mutation(
+    let (mut tx, receipt, replay) = mutation(
         &app,
         &headers,
         &format!("checks/{name}/restorations"),
         &json!(input),
+        Capability::Edit,
     )
     .await?;
     if let Some(v) = replay {
@@ -319,7 +350,7 @@ pub async fn restore(
             .await?
             .ok_or_else(ApiError::absent)?;
     let row=sqlx::query(&format!("UPDATE checks SET draft=$1,draft_revision=draft_revision+1,restored_from_version=$2,updated_at=$3 WHERE name=$4 AND draft_revision=$5 RETURNING {CHECK_COLUMNS}")).bind(policy).bind(input.version).bind(util::now()).bind(name).bind(input.revision).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("revision_conflict"))?;
-    finish(tx, key, digest, detail(&row)?).await
+    finish(tx, receipt, detail(&row)?, Audit::new("check.restore","check",row.get::<String,_>("name")).changes(json!({"previous_revision":input.revision,"revision":row.get::<i64,_>("draft_revision"),"restored_from_version":input.version}))).await
 }
 pub async fn versions(
     State(app): State<App>,
@@ -329,13 +360,13 @@ pub async fn versions(
     let Query(list) = query.map_err(|_| ApiError::invalid("Invalid list query."))?;
     let limit = list.limit()?;
     let cursor = list.cursor()?.map(|(n, _)| n).unwrap_or(i64::MAX);
-    let rows=sqlx::query("SELECT version,policy,published_at FROM policy_versions WHERE check_name=$1 AND version<$2 ORDER BY version DESC LIMIT $3").bind(name).bind(cursor).bind(limit+1).fetch_all(&app.db).await?;
+    let rows=sqlx::query("SELECT version,policy,published_at,published_by FROM policy_versions WHERE check_name=$1 AND version<$2 ORDER BY version DESC LIMIT $3").bind(name).bind(cursor).bind(limit+1).fetch_all(&app.db).await?;
     let next = if rows.len() > limit as usize {
         Some(self::cursor(rows[limit as usize - 1].get("version"), ""))
     } else {
         None
     };
-    let items=rows.iter().take(limit as usize).map(|r|Ok(json!({"version":r.get::<i64,_>("version"),"published_at":r.get::<i64,_>("published_at"),"policy":stored_policy(r.get("policy"))?}))).collect::<Result<Vec<_>>>()?;
+    let items=rows.iter().take(limit as usize).map(|r|Ok(json!({"version":r.get::<i64,_>("version"),"published_at":r.get::<i64,_>("published_at"),"published_by":r.get::<Option<Value>,_>("published_by"),"policy":stored_policy(r.get("policy"))?}))).collect::<Result<Vec<_>>>()?;
     Ok(Json(json!({"items":items,"next_cursor":next})))
 }
 pub async fn metrics(
@@ -365,8 +396,8 @@ pub async fn version(
     State(app): State<App>,
     Path((name, version)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
-    let row=sqlx::query("SELECT version,published_at,policy,restored_from_version FROM policy_versions WHERE check_name=$1 AND version=$2").bind(name).bind(version).fetch_optional(&app.db).await?.ok_or_else(ApiError::absent)?;
+    let row=sqlx::query("SELECT version,published_at,policy,restored_from_version,published_by FROM policy_versions WHERE check_name=$1 AND version=$2").bind(name).bind(version).fetch_optional(&app.db).await?.ok_or_else(ApiError::absent)?;
     Ok(Json(
-        json!({"version":row.get::<i64,_>("version"),"published_at":row.get::<i64,_>("published_at"),"policy":stored_policy(row.get("policy"))?,"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")}),
+        json!({"version":row.get::<i64,_>("version"),"published_at":row.get::<i64,_>("published_at"),"published_by":row.get::<Option<Value>,_>("published_by"),"policy":stored_policy(row.get("policy"))?,"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")}),
     ))
 }
