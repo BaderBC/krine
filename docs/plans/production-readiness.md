@@ -14,6 +14,8 @@ The constitutional vision and UX principles remain authoritative. Earlier suppor
 2. **Data and seeding audit:** establish honest analytical facts, revision/deduplication semantics, bounded queries, retention, coverage and migration costs. Design a deterministic, isolated representative-data workflow and a separate live workload generator.
 3. **Enterprise gap audit:** assess real investigation tasks, per-person access and auditability, operational telemetry, failure visibility, upgrades, recovery and measured capacity. Distinguish implemented foundations from thin product surfaces and missing capabilities.
 
+The three audits are complete. Implementation now runs in separate analytics, representative-demo and dashboard worktrees. The research supports an Overview → filtered Activity → subject history → captured decision → observed check impact workflow. Public Castle screenshots establish design patterns, not authenticated access to its current product. The [Overview guide](https://docs.castle.io/docs/overview-dashboard) and [Explore guide](https://docs.castle.io/docs/exploring-data) are the main references.
+
 The orchestrator owns shared contracts. Independent implementers execute bounded units in worktrees from a verified baseline; fresh QA reviews every implementation. Sensitive changes receive additional security review. Founder/UX review checks meaningful working milestones using representative data. The complete role and review model remains in `ORCHESTRATION.md`.
 
 ## Execution sequence
@@ -37,6 +39,8 @@ User detail must communicate a coherent history, relevant associations, recent c
 Make check performance and observed policy outcomes easy to inspect and compare across time and versions without claiming causation or replay. Add useful investigation details and efficient filtering where the reference research and real tasks justify them. Preserve reviewed publication, explicit unknown behavior and safe mutation recovery.
 
 Replace the shared-password-only operating model with an explicit plan for individual operators, least-privilege roles, attributable administrative audit, session revocation/offboarding and enterprise sign-in. Define the trust contract before implementation; preserve a controlled bootstrap/recovery path. Provider secrets, application credentials and policy publication need server-enforced permissions, not hidden buttons alone.
+
+The next access-design unit should establish stable operator identity, a small Viewer/Editor/Admin capability matrix, explicit recovery administration and standards-based enterprise sign-in. Use verified issuer and subject for external identity; display names and email are not account keys. Keep authorization current when sessions or mutation results are reused. Existing globally keyed mutation recovery must not disclose another operator's result, and role changes must fence concurrent privileged writes. Record administrative changes with the actor and result in the same durable transaction; legacy activity remains explicitly unattributed. This is an operator-access boundary, not a new customer IAM product. OIDC details require dedicated implementation and adversarial review against [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) and [OAuth security best practice](https://www.rfc-editor.org/rfc/rfc9700.html).
 
 ### 4. Prove operation at an explicit scale
 

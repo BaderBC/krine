@@ -2,6 +2,16 @@
 
 **Active work: enterprise product readiness, reopened 2026-09-30.** The founder rejected the prior production-readiness claim. The earlier MVP acceptance below is historical verification evidence, not the completion bar for this work. Follow [the active execution plan](docs/plans/production-readiness.md).
 
+### Current execution
+
+Three independent implementation worktrees branch from `ebd7173`: `feat/activity-analytics`, `feat/representative-demo` and `feat/operator-dashboard`. Their owners are respectively `credential_ui_implementer`, `final_product_qa` and `production_routes_qa`; these inherited agent names do not describe their current implementer roles. None may approve its own changes. Fresh reviewers must inspect frozen units before integration.
+
+The shared analytics contract is settled: a separate authenticated analytics namespace; explicit inclusive time bounds; exact latest logical records; bounded buckets and check/reason breakdowns; truthful retention and asynchronous-delivery metadata. Preserve ClickHouse replacement identity and use metadata-only derived columns first. Measure upgrade-shaped parts as well as new writes. No materialization mutation or extra history copy is approved. ADR 0017 belongs to this unit.
+
+The dashboard owns ADR 0018 and the Overview → Activity → typed subject → captured decision → check workflow. A user lookup is useful immediately; an empty Users navigation item is not. Charts use server aggregates and preserve exact drilldown scope. The demo owns ADR 0019, migration 0008, durable installation sample metadata and per-record sample markers. Historical import is separate from real SDK load; it cannot relax production proof, provider or clock validation.
+
+Reserve compiler and Docker windows explicitly. The reusable compiler target is `/private/tmp/krine-observed-connection/target`; the native deployment and its data are protected. The shared Docker VM has only 2 CPU/2 GiB and cannot establish the supported production capacity. Root removed the unused main-checkout compiler target after verifying no open files, reclaiming about 4 GiB; source, evidence, native binaries, backups and volumes remain intact.
+
 ## Authority and purpose
 
 Finish a capable, polished self-hosted trust platform that supports real operator investigation and enterprise operation. The founder's latest scope includes meaningful analytics, user-behavior investigation, representative seeding and enterprise readiness; an MVP feature checklist is insufficient. `docs/product/vision.md` and `docs/product/ux.md` govern product scope and taste; accepted ADRs govern architecture. New implementation notes do not override them. The lead orchestrator **does not implement production code**.
