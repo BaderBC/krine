@@ -1551,3 +1551,6 @@ mod retention_tests;
 
 #[path = "addressing_integration.rs"]
 mod addressing;
+
+#[path = "analytics_integration.rs"]
+mod analytics_tests;

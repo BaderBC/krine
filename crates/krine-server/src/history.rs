@@ -16,9 +16,16 @@ use sqlx::Row;
 pub(crate) async fn clickhouse(
     app: &App,
     query: &str,
-    params: Vec<(&str, String)>,
+    mut params: Vec<(&str, String)>,
     body: Option<String>,
 ) -> Result<String> {
+    // ClickHouse parses bound values in Escaped format after URL decoding.
+    // Encode data at this boundary; transport settings are not bound values.
+    for (name, value) in &mut params {
+        if name.starts_with("param_") {
+            *value = escaped_parameter(value);
+        }
+    }
     let request = app
         .http
         .post(&app.config.clickhouse_url)
@@ -56,6 +63,23 @@ pub(crate) async fn clickhouse(
         bytes.extend_from_slice(&chunk);
     }
     String::from_utf8(bytes).map_err(|_| ApiError::unavailable())
+}
+fn escaped_parameter(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => encoded.push_str(r"\\"),
+            '\'' => encoded.push_str(r"\'"),
+            '\0' => encoded.push_str(r"\0"),
+            '\u{8}' => encoded.push_str(r"\b"),
+            '\u{c}' => encoded.push_str(r"\f"),
+            '\n' => encoded.push_str(r"\n"),
+            '\r' => encoded.push_str(r"\r"),
+            '\t' => encoded.push_str(r"\t"),
+            _ => encoded.push(character),
+        }
+    }
+    encoded
 }
 pub(crate) fn table(app: &App, versioned: bool) -> String {
     let name = if versioned { "history_v2" } else { "history" };
@@ -108,6 +132,7 @@ pub(crate) async fn initialize(app: &App) -> Result<bool> {
         .fetch_one(&mut *tx)
         .await?;
     if migration.get::<bool, _>("completed") {
+        tx.commit().await?;
         return Ok(true);
     }
     let legacy = table(app, false);
@@ -135,7 +160,7 @@ pub(crate) async fn initialize(app: &App) -> Result<bool> {
         ]);
         // Checkpoint after each bounded copy. A lost acknowledgement safely
         // repeats revision one; the explicit version keeps later states newer.
-        clickhouse(app,&format!("INSERT INTO {versioned} SELECT kind,id,at,payload,1 FROM {legacy} FINAL WHERE (kind,id)>({{kind:String}},{{id:String}}) AND (kind,id)<=({{last_kind:String}},{{last_id:String}})"),params,None).await?;
+        clickhouse(app,&format!("INSERT INTO {versioned} (kind,id,at,payload,revision) SELECT kind,id,at,payload,1 FROM {legacy} FINAL WHERE (kind,id)>({{kind:String}},{{id:String}}) AND (kind,id)<=({{last_kind:String}},{{last_id:String}})"),params,None).await?;
         sqlx::query(
             "UPDATE analytical_migrations SET cursor_kind=$1,cursor_id=$2 WHERE name='history_v2'",
         )
@@ -231,19 +256,133 @@ async fn cleanup(app: &App) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Filters {
-    limit: Option<i64>,
-    cursor: Option<String>,
-    check: Option<String>,
-    operation_id: Option<String>,
-    outcome: Option<String>,
-    entity: Option<String>,
-    entity_kind: Option<String>,
-    name: Option<String>,
-    from: Option<i64>,
-    to: Option<i64>,
+    pub(crate) limit: Option<i64>,
+    pub(crate) cursor: Option<String>,
+    pub(crate) check: Option<String>,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) outcome: Option<String>,
+    pub(crate) entity: Option<String>,
+    pub(crate) entity_kind: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) reason: Option<String>,
+    pub(crate) provenance: Option<String>,
+    pub(crate) from: Option<i64>,
+    pub(crate) to: Option<i64>,
+}
+impl Filters {
+    pub(crate) fn validate(&self, fallback: Option<&'static str>) -> Result<Option<&'static str>> {
+        for value in [
+            &self.check,
+            &self.operation_id,
+            &self.outcome,
+            &self.entity,
+            &self.name,
+            &self.reason,
+            &self.provenance,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if value.len() > 256 {
+                return Err(ApiError::invalid("Activity filter is too long."));
+            }
+        }
+        if self.from.zip(self.to).is_some_and(|(from, to)| from > to) {
+            return Err(ApiError::invalid("Invalid time range."));
+        }
+        if self
+            .provenance
+            .as_deref()
+            .is_some_and(|v| !["backend", "browser"].contains(&v))
+        {
+            return Err(ApiError::invalid("Invalid event provenance."));
+        }
+        match self.entity_kind.as_deref() {
+            Some(kind) => {
+                if self.entity.as_ref().is_none_or(String::is_empty) {
+                    return Err(ApiError::invalid(
+                        "entity_kind requires an entity identifier.",
+                    ));
+                }
+                Ok(Some(match kind {
+                    "client" => "client_id",
+                    "session" => "session_id",
+                    "user" => "user_id",
+                    "ip" => "ip",
+                    _ => return Err(ApiError::invalid("Invalid entity kind.")),
+                }))
+            }
+            None => Ok(fallback),
+        }
+    }
+    fn scope_digest(&self, kind: &str, entity_field: Option<&str>) -> Result<String> {
+        // Preserve previously issued scope digests when additive filters are absent.
+        let mut scope = json!({"kind":kind,"check":self.check,"operation_id":self.operation_id,
+            "outcome":self.outcome,"entity":self.entity,"entity_field":entity_field,
+            "name":self.name,"from":self.from,"to":self.to});
+        if let Some(reason) = &self.reason {
+            scope["reason"] = json!(reason);
+        }
+        if let Some(provenance) = &self.provenance {
+            scope["provenance"] = json!(provenance);
+        }
+        Ok(util::digest(
+            serde_json::to_vec(&scope).map_err(|_| ApiError::unavailable())?,
+        ))
+    }
+    pub(crate) fn predicates(
+        &self,
+        query: &mut String,
+        params: &mut Vec<(&'static str, String)>,
+        entity_field: Option<&'static str>,
+        scalar_columns: bool,
+    ) {
+        let column = |field: &str| {
+            if scalar_columns {
+                format!("coalesce(activity_{field},'')")
+            } else {
+                format!("JSONExtractString(payload,'{field}')")
+            }
+        };
+        for (field, key, value) in [
+            ("check", "param_check", &self.check),
+            ("operation_id", "param_operation_id", &self.operation_id),
+            ("outcome", "param_outcome", &self.outcome),
+            ("name", "param_name", &self.name),
+            ("reason", "param_reason", &self.reason),
+            ("provenance", "param_provenance", &self.provenance),
+        ] {
+            if let Some(value) = value {
+                query.push_str(&format!(
+                    " AND {}={{{}:String}}",
+                    column(field),
+                    key.trim_start_matches("param_")
+                ));
+                params.push((key, value.clone()));
+            }
+        }
+        if let Some(entity) = &self.entity {
+            if let Some(field) = entity_field {
+                query.push_str(&format!(" AND {}={{entity:String}}", column(field)));
+            } else {
+                let clauses = ["client_id", "session_id", "user_id", "ip"]
+                    .map(|field| format!("{}={{entity:String}}", column(field)));
+                query.push_str(&format!(" AND ({})", clauses.join(" OR ")));
+            }
+            params.push(("param_entity", entity.clone()));
+        }
+        if let Some(from) = self.from {
+            query.push_str(" AND at>={from:Int64}");
+            params.push(("param_from", from.to_string()));
+        }
+        if let Some(to) = self.to {
+            query.push_str(" AND at<={to:Int64}");
+            params.push(("param_to", to.to_string()));
+        }
+    }
 }
 const DECISION_SUMMARY_FIELDS: &[&str] = &[
     "decision_id",
@@ -260,6 +399,7 @@ const DECISION_SUMMARY_FIELDS: &[&str] = &[
     "ip",
     "source",
     "reason_summary",
+    "sample_data",
 ];
 
 async fn list(
@@ -268,43 +408,23 @@ async fn list(
     f: Filters,
     entity_field: Option<&'static str>,
 ) -> Result<Json<Value>> {
-    let entity_field = match f.entity_kind.as_deref() {
-        Some(kind) => {
-            if f.entity.as_ref().is_none_or(String::is_empty) {
-                return Err(ApiError::invalid(
-                    "entity_kind requires an entity identifier.",
-                ));
-            }
-            Some(match kind {
-                "client" => "client_id",
-                "session" => "session_id",
-                "user" => "user_id",
-                "ip" => "ip",
-                _ => return Err(ApiError::invalid("Invalid entity kind.")),
-            })
-        }
-        None => entity_field,
-    };
-    let scope = util::digest(
-        serde_json::to_vec(&json!({"kind":kind,"check":f.check,"operation_id":f.operation_id,"outcome":f.outcome,"entity":f.entity,"entity_field":entity_field,"name":f.name,"from":f.from,"to":f.to})).map_err(|_| ApiError::unavailable())?,
-    );
-    let after = history_cursor(f.cursor.as_deref(), &scope, f.entity_kind.is_none())?;
+    let entity_field = f.validate(entity_field)?;
+    if (kind == "event" && f.reason.is_some()) || (kind == "decision" && f.provenance.is_some()) {
+        return Err(ApiError::invalid(
+            "The filter does not apply to this Activity view.",
+        ));
+    }
+    let scope = f.scope_digest(kind, entity_field)?;
+    let after = history_cursor(
+        f.cursor.as_deref(),
+        &scope,
+        f.entity_kind.is_none() && f.reason.is_none() && f.provenance.is_none(),
+    )?;
     let limit = List {
         limit: f.limit,
         ..Default::default()
     }
     .limit()?;
-    for value in [&f.check, &f.operation_id, &f.outcome, &f.entity, &f.name]
-        .into_iter()
-        .flatten()
-    {
-        if value.len() > 256 {
-            return Err(ApiError::invalid("Activity filter is too long."));
-        }
-    }
-    if f.from.zip(f.to).is_some_and(|(from, to)| from > to) {
-        return Err(ApiError::invalid("Invalid time range."));
-    }
     let mut query = "SELECT at,id".to_owned();
     if kind == "decision" {
         // Large policy traces belong only in the detail response. Extract raw
@@ -312,6 +432,8 @@ async fn list(
         for field in DECISION_SUMMARY_FIELDS {
             if *field == "reason_summary" {
                 query.push_str(",if(length(JSONExtractRaw(payload,'reason_summary')) BETWEEN 1 AND 8192,JSONExtractRaw(payload,'reason_summary'),'null') AS summary_reason_summary");
+            } else if *field == "sample_data" {
+                query.push_str(",if(length(JSONExtractRaw(payload,'sample_data')) BETWEEN 1 AND 1024,JSONExtractRaw(payload,'sample_data'),'null') AS summary_sample_data");
             } else {
                 query.push_str(&format!(
                     ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
@@ -332,38 +454,7 @@ async fn list(
         ("param_kind", kind.to_owned()),
         ("param_limit", (limit + 1).to_string()),
     ];
-    for (field, key, value) in [
-        ("check", "param_check", f.check),
-        ("operation_id", "param_operation_id", f.operation_id),
-        ("outcome", "param_outcome", f.outcome),
-        ("name", "param_name", f.name),
-    ] {
-        if let Some(value) = value {
-            query.push_str(&format!(
-                " AND JSONExtractString(payload,'{field}')={{{}:String}}",
-                key.trim_start_matches("param_")
-            ));
-            params.push((key, value));
-        }
-    }
-    if let Some(entity) = f.entity {
-        if let Some(field) = entity_field {
-            query.push_str(&format!(
-                " AND JSONExtractString(payload,'{field}')={{entity:String}}"
-            ));
-        } else {
-            query.push_str(" AND (JSONExtractString(payload,'client_id')={entity:String} OR JSONExtractString(payload,'session_id')={entity:String} OR JSONExtractString(payload,'user_id')={entity:String} OR JSONExtractString(payload,'ip')={entity:String})");
-        }
-        params.push(("param_entity", entity));
-    }
-    if let Some(from) = f.from {
-        query.push_str(" AND at>={from:Int64}");
-        params.push(("param_from", from.to_string()));
-    }
-    if let Some(to) = f.to {
-        query.push_str(" AND at<={to:Int64}");
-        params.push(("param_to", to.to_string()));
-    }
+    f.predicates(&mut query, &mut params, entity_field, false);
     if let Some((at, id)) = after {
         query.push_str(" AND (at,id)<({cursor_at:Int64},{cursor_id:String})");
         params.push(("param_cursor_at", at.to_string()));
@@ -448,6 +539,9 @@ fn summary(row: &Value) -> Result<Value> {
             .as_str()
             .ok_or_else(ApiError::unavailable)?;
         let value = serde_json::from_str(raw).map_err(|_| ApiError::unavailable())?;
+        if *field == "sample_data" && value == Value::Null {
+            continue;
+        }
         result.insert((*field).into(), value);
     }
     Ok(Value::Object(result))
@@ -510,4 +604,41 @@ pub async fn recent(app: &App, kind: &str, entity_kind: &str, entity: &str) -> R
     .await?
     .0["items"]
         .clone())
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    #[test]
+    fn additive_filters_keep_old_scope_and_bind_new_cursor_intent() {
+        let filters = Filters {
+            check: Some("..".into()),
+            from: Some(123),
+            ..Default::default()
+        };
+        let old = util::digest(
+            serde_json::to_vec(&json!({"kind":"decision","check":"..","operation_id":null,
+            "outcome":null,"entity":null,"entity_field":null,"name":null,"from":123,"to":null}))
+            .unwrap(),
+        );
+        assert_eq!(filters.scope_digest("decision", None).unwrap(), old);
+        let filtered = Filters {
+            reason: Some("otherwise".into()),
+            ..filters.clone()
+        };
+        let scope = filtered.scope_digest("decision", None).unwrap();
+        assert_ne!(scope, old);
+        let cursor =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&(123, "decision:d", &scope)).unwrap());
+        assert_eq!(
+            history_cursor(Some(&cursor), &scope, false).unwrap(),
+            Some((123, "decision:d".into()))
+        );
+        assert!(history_cursor(Some(&cursor), &old, true).is_err());
+        let legacy = admin_cursor_for_test();
+        assert!(history_cursor(Some(&legacy), &scope, false).is_err());
+    }
+    fn admin_cursor_for_test() -> String {
+        crate::admin::cursor(123, "event:e")
+    }
 }
