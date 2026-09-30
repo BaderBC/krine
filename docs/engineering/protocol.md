@@ -233,7 +233,115 @@ Delivery metadata is installation-wide even for a scoped chart. Its oldest times
 
 Each process admits at most two concurrent analytics requests. Queries cap execution at 3 seconds, memory at 256 MiB, threads at 2, read rows at 20 million, read bytes at 2 GiB, aggregation/sort groups at 100,000 and output at 1 MiB/1,620 rows. These are safety limits, not throughput promises. Budget exhaustion, concurrency saturation or analytical failure returns 503 `unavailable`; the caller must retain scope and show an honest failure state instead of substituting zeros. See [ADR 0017](../decisions/0017-bounded-activity-analytics.md).
 
+### Subject investigation
+
+`GET /v1/admin/lookup/entities/timeline` requires `kind` (`client`, `session`,
+`user`, `ip`), exact `id`, and inclusive `from`/`to` accepted-time milliseconds.
+The range must be nonnegative, JavaScript-safe and at most 31 days including both
+endpoints. Optional `limit` is 1–100 (default 50); `cursor` is opaque. Unknown,
+duplicate and malformed selectors are rejected. Identifiers follow the existing
+typed lookup validation; whitespace and literal URL/backslash characters in user
+IDs are not normalized. The selected subject need not still have PostgreSQL
+context for retained directly attributed history to remain inspectable.
+
+```typescript
+type EventSummary = {
+  event_id: string;
+  name: string | null;
+  accepted_at: number;
+  occurred_at: number | null;
+  client_id: string | null;
+  session_id: string | null;
+  user_id: string | null;
+  ip: string | null;
+  // Known values: backend, browser. Missing and unsupported values are unknown.
+  provenance: string | null;
+  sample_data?: { dataset_id: string; generator_version: string };
+};
+type TimelineEntry =
+  | { kind: "event"; id: string; accepted_at: number; summary: EventSummary }
+  | { kind: "decision"; id: string; accepted_at: number; summary: DecisionSummary };
+type SubjectTimeline = {
+  schema_version: 1;
+  scope: { kind: "client" | "session" | "user" | "ip"; id: string };
+  range: {
+    from: number; to: number; time_basis: "accepted_at";
+    effective_from: number | null; effective_to: number | null;
+  };
+  as_of: number;
+  retention: { days: number; requested_days: number; applying: boolean; available_since: number };
+  visibility: "asynchronous";
+  delivery: {
+    scope: "installation"; observed_at: number; pending_records: number;
+    oldest_record_accepted_at: number | null;
+  };
+  items: TimelineEntry[];
+  next_cursor: string | null;
+};
+```
+
+`id` is the original, unprefixed event or decision ID; `(kind,id)` identifies the
+row. Entries are newest first by `(accepted_at, kind, id)` descending with UTF-8
+byte ordering for ties (`event` before `decision`). Each query selects the latest
+delivered logical record before filtering its current direct subject and accepted
+time. A user timeline does not include other users' records on a related client
+or IP. Follow an explicit relationship link to investigate that subject.
+
+Decision summaries match Activity and carry captured explanations; full traces
+remain in decision detail. Event summaries omit properties and browser signal
+objects; event detail retains them. `occurred_at` describes the application's
+claimed occurrence time, independently of timeline order. Missing occurrence or
+provenance stays null, never inferred from acceptance or treated as backend
+authority. Unsupported provenance strings likewise mean unknown authority.
+
+Effective range and delivery metadata have the same meaning as Activity analytics.
+An entirely expired or future interval has null effective bounds, empty items and
+no cursor. A successfully queried observable interval has numeric effective bounds,
+even with no matching records. Failure returns 503, never a fabricated empty page.
+`as_of` is the PostgreSQL observation time, not a completeness watermark.
+
+Cursors bind the exact subject, requested interval and timeline version. A changed
+scope starts a new page; changing only the limit is allowed. They are validated
+read-position hints, not signed authorization capabilities. Every page applies the
+same exact subject and range predicates independently. Later delivery, revisions,
+retention and event-ID reuse can change subsequent reads; pagination is not a
+snapshot. Day/session groups assembled from a page are fragments of visible direct
+history, not complete sessions or inferred visits.
+
+Timeline and analytics share two query slots per application process and the same
+execution, scan, sorting, memory and thread budgets. Submitted reads run in a
+bounded, tracked owner: closing the browser request does not release their local
+permits. Each operation, including preparation, has the existing ten-second handler
+deadline; each HTTP call retains its five-second deadline. Each slot also reuses one
+process-random ClickHouse query ID with replacement disabled; after an ambiguous
+transport failure, another read in that slot fails while its predecessor remains
+registered at ClickHouse. A timeout is not evidence of dependency cancellation.
+Graceful shutdown closes admission and drains the tracked jobs. Query IDs are
+fresh on restart: multiple processes and work surviving an abrupt restart or
+ambiguous transport failure can overlap across generations. This is not a fleet
+limit; ClickHouse's existing execution/memory/scan limits remain the final bound.
+
+Timeline output is limited to 101 source rows (one lookahead) and 2 MiB to
+accommodate captured explanations. Limits throw; results are buffered and
+validated before any page is returned. No new history store or materialized
+session model is introduced.
+
+`GET /v1/admin/lookup/entities/context?kind={kind}&id={id}` returns
+`{ kind, id, first_seen, metadata, metrics, associations,
+associations_next_cursor, observed_at }`. Optional `associations_cursor` matches
+the existing entity detail contract. `observed_at` is the timestamp actually used
+for current metric observations; it is not a common snapshot time for all metadata,
+relationships or historical reads. This endpoint does not query ClickHouse.
+Unavailable live metrics retain their explicit Unknown state. Missing PostgreSQL
+entity context returns 404. The legacy entity detail continues to include its
+recent event and decision lists; direct relationship reads remain independent.
+
 ### Query-addressed identifiers
+
+Authenticated admin requests reject malformed percent escapes and invalid UTF-8
+in encoded query names or values before form decoding. Valid U+FFFD and other
+Unicode remain valid data; no replacement decoding, normalization or trimming is
+performed. Existing per-resource duplicate and unknown-selector checks still apply.
 
 Use these additive admin routes when building new clients. Values belong in
 URL-encoded query parameters so valid `.` and `..` identifiers survive browser
@@ -247,6 +355,7 @@ See [ADR 0015](../decisions/0015-query-addressed-identifiers.md).
 | Publication / restoration | `POST /lookup/checks/publications?name={name}`, `POST /lookup/checks/restorations?name={name}` |
 | Check versions / version | `GET /lookup/checks/versions?name={name}`, `GET /lookup/checks/versions/{version}?name={name}` |
 | Event | `GET /lookup/events?id={id}` |
+| Entity context / timeline | `GET /lookup/entities/context?kind={kind}&id={id}`, `GET /lookup/entities/timeline?kind={kind}&id={id}&from={from}&to={to}` |
 | Entity / direct relationships | `GET /lookup/entities?kind={kind}&id={id}`, `GET /lookup/entities/relationships?kind={kind}&id={id}` |
 | Relationship / audit | `GET /lookup/relationships?kind={kind}&id={id}` |
 | Relationship correction / restoration | `POST /lookup/relationships/corrections?kind={kind}&id={id}`, `POST /lookup/relationships/restorations?kind={kind}&id={id}` |

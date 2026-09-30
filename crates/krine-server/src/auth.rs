@@ -130,6 +130,7 @@ pub async fn boundary(State(app): State<App>, mut request: Request, next: Next) 
                     rate(&app, &format!("login:{peer}"), app.config.login_rate, 60).await?;
                 } else {
                     let session = session(&app, request.headers()).await?;
+                    crate::query::validate_encoding(request.uri().query())?;
                     if mutation {
                         if !header(request.headers(), "x-csrf-token")
                             .is_some_and(|v| util::equal(v, &session.csrf))

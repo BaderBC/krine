@@ -30,7 +30,7 @@ async fn run() -> Result<(), String> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let worker = tokio::spawn(krine_server::worker(app.clone(), shutdown_rx));
     tracing::info!(%bind,"Krine listening");
-    axum::serve(
+    let served = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
@@ -38,8 +38,9 @@ async fn run() -> Result<(), String> {
         shutdown_signal().await;
         let _ = shutdown_tx.send(true);
     })
-    .await
-    .map_err(|_| "HTTP service failed".to_owned())?;
+    .await;
+    app.shutdown_analytics().await;
+    served.map_err(|_| "HTTP service failed".to_owned())?;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), worker).await;
     Ok(())
 }

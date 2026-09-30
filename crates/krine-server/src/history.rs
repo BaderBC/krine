@@ -19,6 +19,13 @@ pub(crate) async fn clickhouse(
     mut params: Vec<(&str, String)>,
     body: Option<String>,
 ) -> Result<String> {
+    if let Some(id) = crate::analytical_reads::query_id() {
+        // Keep preparation and final reads in the same dependency slot, even
+        // after a caller disappears or an earlier response becomes unknown.
+        params.retain(|(key, _)| !["query_id", "replace_running_query"].contains(key));
+        params.push(("query_id", id));
+        params.push(("replace_running_query", "0".into()));
+    }
     // ClickHouse parses bound values in Escaped format after URL decoding.
     // Encode data at this boundary; transport settings are not bound values.
     for (name, value) in &mut params {
@@ -427,19 +434,7 @@ async fn list(
     .limit()?;
     let mut query = "SELECT at,id".to_owned();
     if kind == "decision" {
-        // Large policy traces belong only in the detail response. Extract raw
-        // scalar JSON so nullable IDs and numeric fields keep their wire types.
-        for field in DECISION_SUMMARY_FIELDS {
-            if *field == "reason_summary" {
-                query.push_str(",if(length(JSONExtractRaw(payload,'reason_summary')) BETWEEN 1 AND 8192,JSONExtractRaw(payload,'reason_summary'),'null') AS summary_reason_summary");
-            } else if *field == "sample_data" {
-                query.push_str(",if(length(JSONExtractRaw(payload,'sample_data')) BETWEEN 1 AND 1024,JSONExtractRaw(payload,'sample_data'),'null') AS summary_sample_data");
-            } else {
-                query.push_str(&format!(
-                    ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
-                ));
-            }
-        }
+        decision_projection(&mut query);
     } else {
         query.push_str(",payload");
     }
@@ -532,7 +527,22 @@ fn parse_i64(value: &Value) -> Result<i64> {
         .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
         .ok_or_else(ApiError::unavailable)
 }
-fn summary(row: &Value) -> Result<Value> {
+pub(crate) fn decision_projection(query: &mut String) {
+    // Large policy traces belong only in the detail response. Extract raw
+    // scalar JSON so nullable IDs and numeric fields keep their wire types.
+    for field in DECISION_SUMMARY_FIELDS {
+        if *field == "reason_summary" {
+            query.push_str(",if(length(JSONExtractRaw(payload,'reason_summary')) BETWEEN 1 AND 8192,JSONExtractRaw(payload,'reason_summary'),'null') AS summary_reason_summary");
+        } else if *field == "sample_data" {
+            query.push_str(",if(length(JSONExtractRaw(payload,'sample_data')) BETWEEN 1 AND 1024,JSONExtractRaw(payload,'sample_data'),'null') AS summary_sample_data");
+        } else {
+            query.push_str(&format!(
+                ",JSONExtractRaw(payload,'{field}') AS summary_{field}"
+            ));
+        }
+    }
+}
+pub(crate) fn summary(row: &Value) -> Result<Value> {
     let mut result = serde_json::Map::new();
     for field in DECISION_SUMMARY_FIELDS {
         let raw = row[format!("summary_{field}")]

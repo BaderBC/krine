@@ -282,6 +282,7 @@ impl Fixture {
     }
     async fn finish(self) {
         self.server.abort();
+        self.app.shutdown_analytics().await;
         self.mock_server.abort();
         for table in [
             format!("history_{}", self.schema),
@@ -1554,3 +1555,9 @@ mod addressing;
 
 #[path = "analytics_integration.rs"]
 mod analytics_tests;
+
+#[path = "investigation_integration.rs"]
+mod investigation_tests;
+
+#[path = "investigation_security_regressions.rs"]
+mod investigation_security_regressions;
