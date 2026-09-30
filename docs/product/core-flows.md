@@ -136,7 +136,7 @@ Completion: the capability is configured and its actual contribution to later de
 
 Open Overview, choose an interval and inspect its recorded outcomes and trend. Follow a series, protected action, recorded reason or time bucket into Activity. The resulting address preserves the exact inclusive bounds and filters. Open an explanation, then return to the same evidence page. Refresh a relative interval to advance both bounds; refreshing an absolute investigation keeps its interval fixed.
 
-Subject lookup and pivots open the existing typed context page. Completing behavioral profiles remains a separate product gate: preserve the investigation interval, combine events and decisions in a paginated direct history, group actual session/day context, and keep relationships accessible without scanning a long table.
+Subject lookup and pivots preserve the investigation interval in a typed profile. Follow the scoped trend into a narrower period, read directly attributed events and checks together, and page through recorded day/session context. Current facts and inspectable relationships remain nearby. Opening a client investigates that client explicitly; it does not add its other users’ activity to the original profile. Open a captured decision, then return to the exact subject page or original filtered Activity list. A history failure leaves independent context available; a missing current entity does not erase retained history.
 
 ## Acceptance walkthroughs
 

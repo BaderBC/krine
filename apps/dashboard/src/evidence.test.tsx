@@ -300,9 +300,13 @@ describe("captured evidence and verification", () => {
           "ip.risk": observation,
         },
       };
-      vi.mocked(api.get).mockResolvedValue(entity);
+      vi.mocked(api.get).mockResolvedValue({ ...entity, observed_at: 1 });
       mount(`/entities/${kind}/entity`);
-      await screen.findByRole("heading", { name: "Current metrics" });
+      await screen.findByText(/First observed/);
+      if (kind === "user")
+        expect(
+          screen.queryByRole("heading", { name: "Current metrics" }),
+        ).toBeNull();
       const names = [...document.querySelectorAll(".metric-values dt")].map(
         (value) => value.textContent,
       );

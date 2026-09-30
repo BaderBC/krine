@@ -108,12 +108,12 @@ export function AnalyticsSummary({ value }: { value: ActivityAnalytics }) {
               {item.key === "awaiting_verification"
                 ? "Still awaiting a recorded result"
                 : totals.total
-                ? `${new Intl.NumberFormat(undefined, {
-                    maximumFractionDigits: 1,
-                  }).format(
-                    (totals[item.key]! / totals.total) * 100,
-                  )}% of this selection`
-                : "No records in this selection"}
+                  ? `${new Intl.NumberFormat(undefined, {
+                      maximumFractionDigits: 1,
+                    }).format(
+                      (totals[item.key]! / totals.total) * 100,
+                    )}% of this selection`
+                  : "No records in this selection"}
             </span>
           </div>
         ))}
@@ -139,9 +139,11 @@ function useNarrowChart() {
 export function ActivityChart({
   value,
   compact = false,
+  intervalHref,
 }: {
   value: ActivityAnalytics;
   compact?: boolean;
+  intervalHref?: (from: number, to: number) => string;
 }) {
   const id = useId();
   const narrow = useNarrowChart();
@@ -163,8 +165,8 @@ export function ActivityChart({
     value.range.bucket_ms < 3_600_000
       ? `${value.range.bucket_ms / 60_000} minutes`
       : value.range.bucket_ms < 86_400_000
-      ? `${value.range.bucket_ms / 3_600_000} hour`
-      : `${value.range.bucket_ms / 86_400_000} day`;
+        ? `${value.range.bucket_ms / 3_600_000} hour`
+        : `${value.range.bucket_ms / 86_400_000} day`;
   const dayScale = value.range.bucket_ms >= 86_400_000;
   return (
     <section
@@ -238,10 +240,13 @@ export function ActivityChart({
                 );
               })}
               <a
-                href={activityLink(scope, value.scope.kind, {
-                  from: bucket.from,
-                  to: bucket.to,
-                })}
+                href={
+                  intervalHref?.(bucket.from, bucket.to) ??
+                  activityLink(scope, value.scope.kind, {
+                    from: bucket.from,
+                    to: bucket.to,
+                  })
+                }
                 tabIndex={-1}
                 aria-hidden="true"
               >
@@ -280,8 +285,8 @@ export function ActivityChart({
                 index === 0
                   ? "start"
                   : index === value.buckets.length - 1
-                  ? "end"
-                  : "middle"
+                    ? "end"
+                    : "middle"
               }
             >
               {dayScale
@@ -335,10 +340,13 @@ export function ActivityChart({
                   <tr key={bucket.from}>
                     <td>
                       <Link
-                        to={activityLink(scope, value.scope.kind, {
-                          from: bucket.from,
-                          to: bucket.to,
-                        })}
+                        to={
+                          intervalHref?.(bucket.from, bucket.to) ??
+                          activityLink(scope, value.scope.kind, {
+                            from: bucket.from,
+                            to: bucket.to,
+                          })
+                        }
                       >
                         {exactUtc(bucket.from)} – {exactUtc(bucket.to)}
                       </Link>

@@ -445,7 +445,7 @@ it("retains exact long check and subject links without abbreviating their identi
   const check = `check_${"b".repeat(122)}`;
   mount(original, { user_id: user, check });
   expect(screen.getByRole("link", { name: user }).getAttribute("href")).toBe(
-    `/inspect/entity?kind=user&id=${user}&return_to=${encodeURIComponent(scope)}`,
+    `/inspect/entity?kind=user&id=${user}&return_to=${encodeURIComponent(scope)}&from=100&to=200`,
   );
   expect(screen.getByRole("link", { name: check }).getAttribute("href")).toBe(
     `/inspect/check?name=${check}&return_to=${encodeURIComponent(scope)}`,

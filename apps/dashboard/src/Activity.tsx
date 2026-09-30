@@ -1,22 +1,23 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   checkUrl,
   eventPath,
   eventUrl,
-  entityPath,
   entityUrl,
   useAddressedParam,
 } from "./addresses";
 import { encode } from "./api";
 import { AnalyticsPanel, useAnalytics } from "./Analytics";
 import { refreshedWindow, useActivityWindow } from "./activity-analytics";
+import { provenanceLabel } from "./subject-profile";
 import { EntityLookup } from "./Overview";
 import { ActiveScopeFilters, ActivityRange, formWindow } from "./ActivityRange";
-import { CapturedReason } from "./CapturedReason";
+import { CapturedReason, resultLabel } from "./CapturedReason";
+import { MetricValues } from "./MetricValues";
 import { Retention } from "./Retention";
-import { CapturedRelationships, Relationships } from "./Relationships";
+import { CapturedRelationships } from "./Relationships";
 import {
   InvestigationLink as Link,
   ActivityReturn,
@@ -41,18 +42,10 @@ import type {
   ConditionTrace,
   Decision,
   DecisionDetail,
-  Entity,
   Event,
-  MetricObservation,
   Page,
 } from "./types";
 
-export function resultLabel(decision: Decision) {
-  if (decision.source === "request_error") return "Request rejected";
-  if (decision.source === "fallback")
-    return `SDK fallback · ${actionLabel(decision.outcome ?? "Unknown")}`;
-  return decision.outcome ? actionLabel(decision.outcome) : "Evaluation error";
-}
 function reasonLabel(reason: string) {
   return reason.replaceAll("_", " ");
 }
@@ -131,11 +124,7 @@ export function EventRows({ items }: { items: Event[] }) {
                   {event.name}
                 </Link>
               </td>
-              <td>
-                {event.provenance === "backend"
-                  ? "Backend assertion"
-                  : "Client evidence"}
-              </td>
+              <td>{provenanceLabel(event.provenance)}</td>
               <td>
                 <EntityLink
                   kind={event.user_id ? "user" : "client"}
@@ -363,9 +352,13 @@ export function Activity() {
               <select name="reason" defaultValue={params.get("reason") ?? ""}>
                 {params.has("reason") &&
                   ![
-                    "rule_matched", "otherwise", "unknown_denied",
-                    "verification_required", "verification_failed",
-                    "verification_expired", "verification_unavailable",
+                    "rule_matched",
+                    "otherwise",
+                    "unknown_denied",
+                    "verification_required",
+                    "verification_failed",
+                    "verification_expired",
+                    "verification_unavailable",
                   ].includes(params.get("reason")!) && (
                     <option value={params.get("reason")!}>
                       {reasonLabel(params.get("reason")!)}
@@ -691,37 +684,6 @@ function ProviderEvidence({ record }: { record: DecisionDetail }) {
     </>
   );
 }
-function MetricValues({
-  metrics,
-}: {
-  metrics: Record<string, MetricObservation>;
-}) {
-  return (
-    <dl className="metric-values">
-      {Object.entries(metrics).map(([name, observation]) => (
-        <div key={name}>
-          <dt>
-            <Link
-              translate="no"
-              to={`/metrics/${encode(name)}?version=${observation.version}`}
-            >
-              {name} v{observation.version}
-            </Link>
-          </dt>
-          <dd>
-            {observation.state.status === "known"
-              ? scalarLabel(observation.state.value)
-              : `Unknown · ${reasonLabel(observation.state.reason)}`}
-            <p className="help">
-              {reasonLabel(observation.provenance.source)} · Observed{" "}
-              <Time at={observation.provenance.observed_at} />
-            </p>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
 export function DecisionPage() {
   const { id = "" } = useParams();
@@ -896,12 +858,11 @@ export function EventPage() {
       <ResourceError resource={resource} />
       {record ? (
         <>
-          <PageTitle title={record.name} eyebrow={<ActivityReturn events />} />
-          <p className="lead">
-            {record.provenance === "backend"
-              ? "Backend assertion"
-              : "Client evidence"}
-          </p>
+          <PageTitle
+            title={record.name || "Unnamed event"}
+            eyebrow={<ActivityReturn events />}
+          />
+          <p className="lead">{provenanceLabel(record.provenance)}</p>
           <dl className="facts">
             <div>
               <dt>Accepted</dt>
@@ -930,180 +891,4 @@ export function EventPage() {
   );
 }
 
-function recordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-const recordedTime = (value: unknown) =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
-const recordedIdentifier = (value: unknown) =>
-  typeof value === "string" && value.length > 0;
-const nullableIdentifier = (value: unknown) =>
-  value === null || recordedIdentifier(value);
-
-function validEntityMetric(value: unknown): boolean {
-  if (
-    !recordObject(value) ||
-    !recordObject(value.state) ||
-    !recordObject(value.provenance)
-  )
-    return false;
-  const state = value.state;
-  return (
-    Number.isSafeInteger(value.version) &&
-    Number(value.version) > 0 &&
-    (state.status === "known"
-      ? typeof state.value === "string" ||
-        typeof state.value === "boolean" ||
-        (typeof state.value === "number" &&
-          Number.isFinite(state.value) &&
-          Math.abs(state.value) <= Number.MAX_SAFE_INTEGER)
-      : state.status === "unknown" && typeof state.reason === "string") &&
-    typeof value.provenance.source === "string" &&
-    recordedTime(value.provenance.observed_at)
-  );
-}
-function validEntityDecision(value: unknown): boolean {
-  if (!recordObject(value)) return false;
-  return (
-    recordedIdentifier(value.decision_id) &&
-    recordedIdentifier(value.operation_id) &&
-    recordedIdentifier(value.check) &&
-    typeof value.reason === "string" &&
-    (value.outcome === null || typeof value.outcome === "string") &&
-    typeof value.source === "string" &&
-    ["evaluation", "request_error", "fallback"].includes(value.source) &&
-    recordedTime(value.accepted_at) &&
-    (value.completed_at === null || recordedTime(value.completed_at)) &&
-    (value.policy_version === null ||
-      (Number.isSafeInteger(value.policy_version) &&
-        Number(value.policy_version) > 0)) &&
-    [value.client_id, value.session_id, value.user_id, value.ip].every(
-      nullableIdentifier,
-    )
-  );
-}
-function validEntityEvent(value: unknown): boolean {
-  if (!recordObject(value)) return false;
-  return (
-    recordedIdentifier(value.event_id) &&
-    recordedIdentifier(value.name) &&
-    recordedTime(value.accepted_at) &&
-    typeof value.provenance === "string" &&
-    ["backend", "browser"].includes(value.provenance) &&
-    [value.client_id, value.session_id, value.user_id, value.ip].every(
-      (id) => id === undefined || nullableIdentifier(id),
-    )
-  );
-}
-function validEntity(
-  value: unknown,
-  kind: string,
-  id: string,
-): value is Entity {
-  if (!recordObject(value)) return false;
-  return (
-    value.id === id &&
-    value.kind === kind &&
-    ["client", "session", "user", "ip"].includes(kind) &&
-    recordedTime(value.first_seen) &&
-    recordObject(value.metadata) &&
-    recordObject(value.metrics) &&
-    Object.values(value.metrics).every(validEntityMetric) &&
-    Array.isArray(value.recent_decisions) &&
-    value.recent_decisions.length <= 20 &&
-    value.recent_decisions.every(validEntityDecision) &&
-    Array.isArray(value.recent_events) &&
-    value.recent_events.length <= 20 &&
-    value.recent_events.every(validEntityEvent)
-  );
-}
-
-export function EntityPage() {
-  const kind = useAddressedParam("kind");
-  const id = useAddressedParam("id");
-  const validate = useCallback(
-    (value: unknown): value is Entity => validEntity(value, kind, id),
-    [kind, id],
-  );
-  const resource = useResource<Entity>(
-    kind && id ? entityPath(kind, id) : null,
-    validate,
-  );
-  const entity = resource.data;
-  const metrics = entity
-    ? Object.fromEntries(
-        Object.entries(entity.metrics).filter(
-          ([name]) =>
-            name.startsWith(`${kind}.`) ||
-            (kind === "session" && name.startsWith("browser.")),
-        ),
-      )
-    : {};
-  return (
-    <>
-      {(!id || !kind) && (
-        <Notice>Provide one entity kind and ID in the address.</Notice>
-      )}
-      <ResourceError resource={resource} />
-      {entity ? (
-        <>
-          <ActivityReturn />
-          <PageTitle
-            title={entity.id}
-            eyebrow={
-              <>
-                {kind === "ip" ? "IP" : kind[0]?.toUpperCase() + kind.slice(1)}{" "}
-                ·{" "}
-                <Link
-                  to={`/activity?entity=${encode(id)}&entity_kind=${encode(kind)}`}
-                >
-                  View activity
-                </Link>
-              </>
-            }
-          />
-          <p className="help">
-            First observed <Time at={entity.first_seen} />. A client or shared
-            IP is evidence, never proof of a person’s identity.
-          </p>
-          <h2>Current metrics</h2>
-          {Object.keys(metrics).length ? (
-            <MetricValues metrics={metrics} />
-          ) : (
-            <p className="muted">
-              No built-in metrics apply directly to this entity. Inspect its
-              relationships for related context.
-            </p>
-          )}
-        </>
-      ) : resource.loading ? (
-        <Loading />
-      ) : null}
-      {id && ["client", "session", "user", "ip"].includes(kind) && (
-        <Relationships
-          key={`${kind}:${id}`}
-          kind={kind}
-          id={id}
-          refreshEntity={resource.refresh}
-        />
-      )}
-      {entity && (
-        <>
-          <h2>Recent decisions</h2>
-          {entity.recent_decisions.length ? (
-            <DecisionRows items={entity.recent_decisions} />
-          ) : (
-            <p className="muted">No recent decisions.</p>
-          )}
-          <h2>Recent events</h2>
-          {entity.recent_events.length ? (
-            <EventRows items={entity.recent_events} />
-          ) : (
-            <p className="muted">No recent events.</p>
-          )}
-          <JsonDetails title="Metadata" value={entity.metadata} />
-        </>
-      )}
-    </>
-  );
-}
+export { EntityPage } from "./SubjectProfile";

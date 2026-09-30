@@ -32,7 +32,7 @@ export function validRelationshipSummary(
   if (!object(value)) return false;
   return (
     identifier(value.id) &&
-    ["backend", "observed_ip"].includes(String(value.kind)) &&
+    (value.kind === "backend" || value.kind === "observed_ip") &&
     identifier(value.client_id) &&
     nullableId(value.session_id) &&
     nullableId(value.user_id) &&
@@ -50,11 +50,13 @@ export function validRelationshipSummary(
     Number(value.last_seen) >= Number(value.first_seen) &&
     nullableId(value.credential_id) &&
     nullableId(value.last_credential_id) &&
+    typeof value.first_source === "string" &&
     ["backend", "browser.context", "browser.proof", "legacy"].includes(
-      String(value.first_source),
+      value.first_source,
     ) &&
+    typeof value.last_source === "string" &&
     ["backend", "browser.context", "browser.proof", "legacy"].includes(
-      String(value.last_source),
+      value.last_source,
     ) &&
     nullableId(value.first_event_id) &&
     nullableId(value.last_event_id) &&

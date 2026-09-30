@@ -1,8 +1,14 @@
 import { encode } from "./api";
 import { InvestigationLink as Link } from "./navigation";
-import { comparisons, refLabel, scalarLabel } from "./policy";
+import { actionLabel, comparisons, refLabel, scalarLabel } from "./policy";
 import type { Decision, ReasonEvidence, ReasonSummary } from "./types";
 
+export function resultLabel(decision: Decision) {
+  if (decision.source === "request_error") return "Request rejected";
+  if (decision.source === "fallback")
+    return `SDK fallback · ${actionLabel(decision.outcome ?? "Unknown")}`;
+  return decision.outcome ? actionLabel(decision.outcome) : "Evaluation error";
+}
 const object = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
 const text = (value: unknown): value is string =>
