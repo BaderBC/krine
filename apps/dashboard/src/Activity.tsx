@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   checkUrl,
   eventPath,
@@ -10,6 +10,10 @@ import {
   useAddressedParam,
 } from "./addresses";
 import { encode } from "./api";
+import { AnalyticsPanel, useAnalytics } from "./Analytics";
+import { refreshedWindow, useActivityWindow } from "./activity-analytics";
+import { EntityLookup } from "./Overview";
+import { ActiveScopeFilters, ActivityRange, formWindow } from "./ActivityRange";
 import { CapturedReason } from "./CapturedReason";
 import { Retention } from "./Retention";
 import { CapturedRelationships, Relationships } from "./Relationships";
@@ -59,7 +63,7 @@ export function DecisionRows({ items }: { items: Decision[] }) {
       <table>
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Time · UTC</th>
             <th>Check</th>
             <th>Result</th>
             <th>Subject</th>
@@ -72,7 +76,7 @@ export function DecisionRows({ items }: { items: Decision[] }) {
                 <Link
                   to={`/activity/decisions/${encode(decision.decision_id)}`}
                 >
-                  <Time at={decision.accepted_at} />
+                  <Time at={decision.accepted_at} compact />
                 </Link>
               </td>
               <td>
@@ -86,7 +90,7 @@ export function DecisionRows({ items }: { items: Decision[] }) {
                 >
                   {resultLabel(decision)}
                 </Link>
-                <CapturedReason decision={decision} />
+                <CapturedReason decision={decision} compact />
               </td>
               <td>
                 <span className="compact-label" aria-hidden="true">
@@ -110,7 +114,7 @@ export function EventRows({ items }: { items: Event[] }) {
       <table>
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Time · UTC</th>
             <th>Event</th>
             <th>Source</th>
             <th>Subject</th>
@@ -120,7 +124,7 @@ export function EventRows({ items }: { items: Event[] }) {
           {items.map((event) => (
             <tr key={event.event_id}>
               <td>
-                <Time at={event.accepted_at} />
+                <Time at={event.accepted_at} compact />
               </td>
               <td>
                 <Link className="identifier" to={eventUrl(event.event_id)}>
@@ -147,8 +151,9 @@ export function EventRows({ items }: { items: Event[] }) {
 }
 
 export function Activity() {
-  const [params, setParams] = useSearchParams();
+  const { params, setParams, ready, all, scopeError } = useActivityWindow();
   const navigate = useNavigate();
+  const [filterError, setFilterError] = useState<string | null>(null);
   const events = params.get("view") === "events";
   const origin = useActivityOrigin();
   const entityKind =
@@ -163,23 +168,15 @@ export function Activity() {
     next.set("view", view);
     next.delete("cursor");
     for (const key of view === "events"
-      ? ["check", "operation_id", "outcome"]
-      : ["name"])
+      ? ["check", "operation_id", "outcome", "reason"]
+      : ["name", "provenance"])
       next.delete(key);
     return `/activity?${next}`;
   }
-  const defaultFrom = useMemo(() => Date.now() - 86_400_000, []);
-  useEffect(() => {
-    if (params.has("from") || params.get("range") === "all") return;
-    setParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.set("from", String(defaultFrom));
-        return next;
-      },
-      { replace: true },
-    );
-  }, [params, setParams, defaultFrom]);
+  const analytics = useAnalytics(
+    ready && !all ? params : new URLSearchParams(),
+    events ? "event" : "decision",
+  );
   const query = new URLSearchParams();
   for (const key of [
     "cursor",
@@ -188,6 +185,8 @@ export function Activity() {
     "outcome",
     "entity",
     "name",
+    "reason",
+    "provenance",
     "from",
     "to",
   ]) {
@@ -195,10 +194,8 @@ export function Activity() {
     if (value) query.set(key, value);
   }
   if (entityKind) query.set("entity_kind", entityKind);
-  if (!query.has("from") && params.get("range") !== "all")
-    query.set("from", String(defaultFrom));
   const resource = useResource<Page<Decision | Event>>(
-    `/activity/${events ? "events" : "decisions"}?${query}`,
+    ready ? `/activity/${events ? "events" : "decisions"}?${query}` : null,
   );
   useActivityScroll(Boolean(resource.data));
   const searchKey =
@@ -208,57 +205,94 @@ export function Activity() {
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const next = new URLSearchParams();
-    if (events) next.set("view", "events");
+    const next = new URLSearchParams(params);
+    next.delete("cursor");
     const key = String(form.get("search_kind"));
     const search = String(form.get("search") ?? "");
     const value = key === "entity" ? search : search.trim();
     if (key === "record" && value) {
       rememberActivityPosition(origin);
       navigate(
-        `${events ? eventUrl(value) : `/activity/decisions/${encode(value)}`}${origin ? `${events ? "&" : "?"}return_to=${encode(origin)}` : ""}`,
+        `${events ? eventUrl(value) : `/activity/decisions/${encode(value)}`}${
+          origin ? `${events ? "&" : "?"}return_to=${encode(origin)}` : ""
+        }`,
       );
       return;
     }
-    if (entityKind && (key !== "entity" || value === params.get("entity"))) {
-      next.set("entity", params.get("entity")!);
-      next.set("entity_kind", entityKind);
-    }
+    // Switching Find by replaces the visible search dimension, not the other scope.
+    if (key !== searchKey) next.delete(searchKey);
+    if (key === "entity" && value !== params.get("entity"))
+      next.delete("entity_kind");
     if (value) next.set(key, value);
-    const range = String(form.get("range"));
-    next.set("range", range);
-    if (range === (params.get("range") ?? "24")) {
-      for (const key of ["from", "to"])
-        if (params.has(key)) next.set(key, params.get(key)!);
-    } else if (range !== "all")
-      next.set("from", String(Date.now() - Number(range) * 3_600_000));
+    else {
+      next.delete(key);
+      if (key === "entity") next.delete("entity_kind");
+    }
+    try {
+      for (const key of ["range", "from", "to"]) next.delete(key);
+      for (const [key, value] of formWindow(form, params, Date.now()))
+        next.set(key, value);
+      setFilterError(null);
+    } catch (cause) {
+      setFilterError((cause as Error).message);
+      return;
+    }
     const outcome = String(form.get("outcome") ?? "");
     if (outcome && !events) next.set("outcome", outcome);
+    else next.delete("outcome");
+    const extra = events ? "provenance" : "reason";
+    const extraValue = String(form.get(extra) ?? "");
+    if (extraValue) next.set(extra, extraValue);
+    else next.delete(extra);
     setParams(next);
   }
+  function refresh() {
+    const next = refreshedWindow(params, Date.now());
+    if (next.toString() !== params.toString()) setParams(next);
+    else {
+      void resource.refresh();
+      void analytics.refresh();
+    }
+  }
+  if (scopeError)
+    return (
+      <div className="activity-page">
+        <PageTitle title="Activity" />
+        <Notice>
+          <p>{scopeError}</p>
+          <button onClick={() => setParams(new URLSearchParams())}>
+            Reset filters
+          </button>
+        </Notice>
+      </div>
+    );
   return (
-    <>
+    <div className="activity-page">
       <PageTitle title="Activity">
+        <nav className="view-switch" aria-label="Activity view">
+          <Link
+            aria-current={!events ? "page" : undefined}
+            to={viewUrl("decisions")}
+          >
+            Decisions
+          </Link>
+          <Link
+            aria-current={events ? "page" : undefined}
+            to={viewUrl("events")}
+          >
+            Events
+          </Link>
+        </nav>
         <button
-          disabled={resource.loading}
-          onClick={() => void resource.refresh()}
+          disabled={resource.loading || analytics.loading || !ready}
+          onClick={refresh}
         >
           {resource.loading && resource.data
             ? "Refreshing…"
             : "Refresh activity"}
         </button>
       </PageTitle>
-      <nav className="view-switch" aria-label="Activity view">
-        <Link
-          aria-current={!events ? "page" : undefined}
-          to={viewUrl("decisions")}
-        >
-          Decisions
-        </Link>
-        <Link aria-current={events ? "page" : undefined} to={viewUrl("events")}>
-          Events
-        </Link>
-      </nav>
+
       <form
         className="activity-filter"
         key={params.toString()}
@@ -291,15 +325,7 @@ export function Activity() {
             placeholder="Name or identifier…"
           />
         </label>
-        <label>
-          Time
-          <select name="range" defaultValue={params.get("range") ?? "24"}>
-            <option value="24">Last 24 hours</option>
-            <option value="168">Last 7 days</option>
-            <option value="720">Last 30 days</option>
-            <option value="all">All retained records</option>
-          </select>
-        </label>
+        <ActivityRange params={params} all />
         {!events && (
           <label>
             Result
@@ -312,7 +338,72 @@ export function Activity() {
           </label>
         )}
         <button type="submit">Find</button>
+        <details className="extra-filters">
+          <summary>
+            More filters
+            {params.has("reason") || params.has("provenance")
+              ? " · active"
+              : ""}
+          </summary>
+          {events ? (
+            <label>
+              Source
+              <select
+                name="provenance"
+                defaultValue={params.get("provenance") ?? ""}
+              >
+                <option value="">Any source</option>
+                <option value="backend">Backend assertions</option>
+                <option value="browser">Client evidence</option>
+              </select>
+            </label>
+          ) : (
+            <label>
+              Recorded reason
+              <select name="reason" defaultValue={params.get("reason") ?? ""}>
+                {params.has("reason") &&
+                  ![
+                    "rule_matched", "otherwise", "unknown_denied",
+                    "verification_required", "verification_failed",
+                    "verification_expired", "verification_unavailable",
+                  ].includes(params.get("reason")!) && (
+                    <option value={params.get("reason")!}>
+                      {reasonLabel(params.get("reason")!)}
+                    </option>
+                  )}
+                <option value="">Any reason</option>
+                <option value="rule_matched">Rule matched</option>
+                <option value="otherwise">Default outcome</option>
+                <option value="unknown_denied">
+                  Denied on unknown evidence
+                </option>
+                <option value="verification_required">
+                  Verification required
+                </option>
+                <option value="verification_failed">Verification failed</option>
+                <option value="verification_expired">
+                  Verification expired
+                </option>
+                <option value="verification_unavailable">
+                  Verification unavailable
+                </option>
+              </select>
+            </label>
+          )}
+        </details>
       </form>
+      <ActiveScopeFilters
+        params={params}
+        keys={["check", "operation_id", "name", "entity"].filter(
+          (key) => key !== searchKey && !(key === "entity" && entityKind),
+        )}
+        onChange={setParams}
+      />
+      {filterError && (
+        <p className="error" role="alert">
+          {filterError}
+        </p>
+      )}
       {entityKind ? (
         <p className="help">
           Scoped to {entityKind === "ip" ? "IP" : entityKind}:{" "}
@@ -342,13 +433,27 @@ export function Activity() {
           </p>
         )
       )}
-      <ResourceError resource={resource} />
-      {resource.refreshed && (
+      {!all && analytics.path !== null ? (
+        <AnalyticsPanel resource={analytics} compact />
+      ) : (
         <p className="help">
-          Last refreshed <Time at={resource.refreshed} />. New records appear
-          when you refresh.
+          Choose an interval of up to 31 days to see an activity chart. The
+          record list remains available for all retained history.
         </p>
       )}
+      <div className="section-heading records-heading">
+        <h2>{events ? "Accepted events" : "Check attempts"}</h2>
+        <span className="help">
+          Newest first
+          {resource.refreshed && (
+            <>
+              {" "}
+              · refreshed <Time at={resource.refreshed} compact />
+            </>
+          )}
+        </span>
+      </div>
+      <ResourceError resource={resource} />
       {resource.data ? (
         <>
           {resource.data.items.length ? (
@@ -390,12 +495,16 @@ export function Activity() {
       ) : resource.loading ? (
         <Loading />
       ) : null}
+      <details className="lookup-disclosure">
+        <summary>Find a user, client, session or IP</summary>
+        <EntityLookup params={params} />
+      </details>
       <p className="help footnote">
         Activity shows records Krine received and retained. Your application
         must record local SDK fallback; the SDK does not report it
         automatically. An absent record does not prove no action occurred.
       </p>
-    </>
+    </div>
   );
 }
 

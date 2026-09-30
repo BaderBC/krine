@@ -186,11 +186,17 @@ export function validReasonSummary(
   );
 }
 const reasonText = (value: string) => value.replaceAll("_", " ");
-export function CapturedReason({ decision }: { decision: Decision }) {
+export function CapturedReason({
+  decision,
+  compact = false,
+}: {
+  decision: Decision;
+  compact?: boolean;
+}) {
   const value = decision.reason_summary;
   if (value == null)
     return (
-      <p className="help">
+      <p className={`help${compact ? " compact-reason" : ""}`}>
         {reasonText(decision.reason)} · Captured evidence summary not recorded.
       </p>
     );
@@ -226,7 +232,7 @@ export function CapturedReason({ decision }: { decision: Decision }) {
           ? `Rule ${rule!.position} · ${reasonText(value.reason)}`
           : `Rule ${rule!.position} matched`;
   return (
-    <p className="help captured-reason">
+    <p className={`help captured-reason${compact ? " compact-reason" : ""}`}>
       {headline}
       {leaf && (
         <span className="captured-value">

@@ -1,22 +1,23 @@
 # Information architecture
 
-Krine opens on **Checks**. The persistent navigation contains **Checks**, **Activity** and **Metrics**, followed by a quieter **Settings** link. A developer configures an action, observes what happened and follows the evidence when necessary.
+Krine opens on **Overview**. The horizontal navigation contains **Overview**, **Checks**, **Activity** and **Metrics**, followed by a quieter **Settings** link. Operators scan recorded activity, investigate changes and configure protected actions in Checks.
 
-This is the MVP dashboard design, not a shipped interface. [UX principles](ux.md) govern product taste; the [MVP scope](mvp.md) and [accepted contracts](../decisions/0007-mvp-contract-defaults.md) govern behavior. [Core flows](core-flows.md) describe the interactions. [ADR 0008](../decisions/0008-check-centered-information-architecture.md) records the structural choices.
+This document describes the dashboard structure. [UX principles](ux.md) govern product taste; the [MVP scope](mvp.md) and [accepted contracts](../decisions/0007-mvp-contract-defaults.md) govern behavior. [Core flows](core-flows.md) describe the interactions. [ADR 0018](../decisions/0018-operator-overview-and-investigation.md) updates the landing page and investigation direction; the policy editor choices in [ADR 0008](../decisions/0008-check-centered-information-architecture.md) remain in force.
 
 ## Navigation
 
 | Destination | User question | Default surface | Primary action |
 | --- | --- | --- | --- |
+| Overview | What changed in recorded activity? | Counts, accepted-time trend and recorded reasons | Drill into a scoped interval |
 | Checks | What actions do I protect, and how? | Compact check list; open a check to read its active policy | Create check; then Edit policy |
 | Activity | What happened, and why? | Recent check attempts, with an Events view | Open a record |
 | Metrics | What can my policies know? | Searchable, read-only catalog | Read a metric |
 | Settings | How is this deployment connected? | Application connection and provider capabilities | Configure the relevant connection |
 
-Use one compact header, a content column and normal document scrolling. The product name links to Checks. A deployment label helps distinguish separate installations; it is plain text, not a project switcher. On narrow screens, the three primary links remain visible and detail content stacks vertically.
+Use one compact header, a content column and normal document scrolling. The product name links to Overview. A deployment label helps distinguish separate installations; it is plain text, not a project switcher. On narrow screens, the primary links remain visible and detail content stacks vertically.
 
 ```text
-Krine · staging       Checks   Activity   Metrics              Settings
+Krine · staging       Overview   Checks   Activity   Metrics              Settings
 
 Checks                                                   Create check
 
@@ -49,15 +50,16 @@ Routes describe dashboard navigation, not public API contracts.
 
 | Route | Content |
 | --- | --- |
+| `/` | Overview; time and optional check scope in the query |
 | `/checks` | Check list; creation uses a name field inline |
-| `/checks/:checkId` | Active policy, or draft if never published |
-| `/checks/:checkId?view=draft` | Editable draft |
-| `/checks/:checkId?version=:version` | Immutable published policy |
+| `/inspect/check?name=:checkName` | Active policy, or draft if never published |
+| `/inspect/check?name=:checkName&view=draft` | Editable draft |
+| `/inspect/check?name=:checkName&version=:version` | Immutable published policy |
 | `/activity?view=decisions` | Check attempts; default Activity view |
 | `/activity?view=events` | Events and client evidence |
 | `/activity/decisions/:attemptId` | One logical action attempt and its explanation |
-| `/activity/events/:eventId` | One event and its provenance |
-| `/entities/:type/:entityId` | Client, backend-known user or observed IP |
+| `/inspect/event?id=:eventId` | One event and its provenance |
+| `/inspect/entity?kind=:type&id=:entityId` | Client, backend-known user, session or observed IP |
 | `/metrics` | Metric catalog |
 | `/metrics/:metricId?version=:version` | Versioned definition |
 | `/settings` | Application connection, Providers and collapsed Diagnostics |
@@ -72,7 +74,7 @@ The list shows name, publication state and last activity. A draft indicator mean
 
 Opening a check shows its name, active version and readable policy. Keep **Edit policy** prominent. **View activity**, **Integration** and **Versions** are secondary links. Versions expands a compact list on this page. There is no overview tab, separate policy application or permanent inspector pane.
 
-Usage belongs to filtered Activity: one compact summary of attempts, final denials, evaluation errors and evaluation latency for the selected time range. Label denominators and exclude pending attempts and local SDK fallback from evaluated allow/deny rates. Omit unavailable measures instead of displaying invented zeroes. Charts are deferred until a concrete investigation needs one.
+Observed check usage belongs to filtered Activity. Overview and Activity use server aggregates over the selected interval, rather than counting the visible page. Show recorded Allow, Deny and currently Awaiting verification states. Unknown outcomes remain separate from a known denial caused by unknown evidence. Do not invent evaluation latency, missing-evidence totals or SDK fallback metrics. A check filter includes every policy version; version-specific impact requires an explicit supported filter.
 
 ### Policy editor
 
@@ -109,9 +111,15 @@ The MVP verification step has fixed, visible branches: verified → continue to 
 
 New drafts start with **Otherwise Deny**. Saving a draft never activates it. Publishing reviews changes to rule order, conditions, unknown outcomes, final outcome and metric versions. See [publishing and restoration](core-flows.md#2-create-change-and-restore-a-policy).
 
+## Overview: scan and investigate
+
+Lead with a compact interval/check toolbar, recorded counts and one accepted-time trend. Keep the whole useful trend visible on a laptop; show protected actions and recorded reasons below it. A count, series, reason or interval link opens Activity with the exact population it counted. A conflicting zero series must not replace an active filter and broaden the result. Typed subject lookup is available beside the page introduction.
+
+Use UTC-aligned buckets clipped to the requested and retained interval. Accessible chart data lives in a collapsed table, so hundreds of buckets do not add mandatory Tab stops. Missing retained coverage is different from a successful zero count. Record delivery is asynchronous; charts and lists are independent observations. Relative refresh advances both time bounds; copied absolute intervals remain fixed.
+
 ## Activity: one investigation surface
 
-Default to **Decisions**, the last 24 hours and newest first. Use a **Decisions / Events** view switch, one search field and a time control. Result/check filters appear in Decisions; event name/source filters appear in Events. Additional filters stay behind a single Filters control.
+Default to **Decisions**, the last 24 hours and newest first. Use a **Decisions / Events** view switch, one search field and a time control. Result/check filters appear in Decisions; event name/source filters appear in Events. Additional filters stay behind a single More filters control. A short version of the same trend sits above the compact evidence table. Exact-range editing stays collapsed on a chart drilldown, with the selected interval readable beside the filters.
 
 The search field accepts a check name, operation/record ID or exact client/user/IP identifier. Matching entities can be opened directly, including those with no activity in the selected period. Explain supported inputs in the field's help text; do not require query syntax or add a global command palette.
 
@@ -122,7 +130,7 @@ The search field accepts a check name, operation/record ID or exact client/user/
 
 Show Allow, Deny, Awaiting verification, Request rejected and Evaluation error as distinct text states. A rejected request has a reason such as invalid proof or missing active policy; it has no evaluated policy outcome. A reported local result reads **SDK fallback · Allow** or **SDK fallback · Deny**. If its Krine evaluation is later recovered, show the two outcomes separately within the attempt. Never present an SDK fallback as an evaluated decision.
 
-Activity covers records Krine has received and retained. An unreachable SDK may be unable to report fallback; the absence of a record does not prove that the application did nothing. Show the last successful refresh time and any query failure. New rows wait behind **Show new activity** so investigation does not move under the user.
+Activity covers records Krine has received and retained. An unreachable SDK may be unable to report fallback; the absence of a record does not prove that the application did nothing. Show the last successful refresh time and any query failure. Rows change only on an explicit refresh or navigation so investigation does not move under the user.
 
 ### Decision detail
 
@@ -148,7 +156,7 @@ Use values captured for the evaluation, linked to their exact metric definitions
 
 An event opens with name, source, occurrence/receipt times and associated identifiers. Label **Backend assertion** and **Client evidence** explicitly. A source describes authority, not whether a reported event is desirable. Properties are an expandable read-only payload, not a schema designer.
 
-An entity opens with its type and identifier, then compact sections for current metrics, relationships and recent activity. Current metric values carry an as-of time. Each relationship shows endpoints, provenance, authority, first/last observation and status. IP sharing and fingerprints never become a “same person” assertion. Session IDs link into filtered evidence within this context.
+The current entity page opens with its type and identifier, then current metrics, relationships and a recent-activity sample. This sample is not the completed behavioral investigation: the next bounded unit must preserve the originating interval, add a direct subject trend and paginated unified event/decision history, group by recorded day/session context, and keep relationships visible beside history. Related-client activity must remain distinct from the user’s own records. Context navigation remains available when history is unavailable. Current metric values carry an as-of time. Each relationship shows endpoints, provenance, authority, first/last observation and status. IP sharing and fingerprints never become a “same person” assertion. Session IDs link into filtered evidence within this context.
 
 Relationship correction lives on the affected relationship row. Preserve the original assertion and correction history, explain the effect on future derived values and leave past decisions intact. There is no merge-identities button, graph canvas, separate cases area or generic blocklist.
 
@@ -178,6 +186,6 @@ Use semantic links, buttons, forms and tables; labeled controls; visible unobscu
 
 ## UI budget
 
-Keep three primary destinations, one settings destination and one policy editor. Each task has one primary action. Read-only pages need none. A normal policy requires no tab changes, canvas manipulation or infrastructure tour.
+Keep four primary destinations, one settings destination and one policy editor. Each task has one primary action. Read-only pages need none. A normal policy requires no tab changes, canvas manipulation or infrastructure tour.
 
-Exclude a home overview, standalone Policies/Providers/Entities navigation, setup wizard, analytics dashboards, project switcher, policy templates gallery, onboarding tours, graph visualization, testing/replay product and permanent detail drawers. Reconsider an exclusion only when a demonstrated task cannot remain clear within these surfaces.
+Exclude standalone Policies/Providers/Entities navigation, setup wizard, decorative analytics surfaces, project switcher, policy templates gallery, onboarding tours, graph visualization, testing/replay product and permanent detail drawers. Reconsider an exclusion only when a demonstrated task cannot remain clear within these surfaces.

@@ -6,7 +6,7 @@ These flows implement the [information architecture](information-architecture.md
 
 Entry: a developer has started a self-hosted deployment and opened its dashboard. Installation and access setup belong to deployment instructions; the product adds no organization/project onboarding.
 
-1. **Checks, empty.** Show “Create a check for an action your application protects,” **Create check**, and a secondary **Connect application** link. Do not populate example checks or empty statistic cards.
+1. **Overview → Checks, empty.** Show “Create a check for an action your application protects,” **Create check**, and a secondary **Connect application** link. Do not populate example checks or empty statistic cards.
 2. **Name the check.** Create it inline with a unique application-facing name such as `can_claim_trial`. Open its unpublished draft. Explain that the name is used in application code; keep the identifier stable after creation.
 3. **Write and publish the policy.** Add a condition from the built-in catalog, read its meaning, choose the result and inspect the unknown path. A new draft's Otherwise outcome is Deny. Review and publish the first version. Publication alone does not mean the application is protected.
 4. **Connect the application.** The check's Integration link opens the shared Application connection section with this check selected. Provide one browser example and one server example using the installed SDK versions. Server credentials appear only in the server setup. The examples cover client/session evidence, an authoritative backend event and association with a backend-known user.
@@ -131,6 +131,12 @@ Completion: the capability is configured and its actual contribution to later de
 | Invalid form | Field-level error, focus first error, retain valid input |
 | Destructive configuration change | Name the affected resource and consequences; confirm or offer undo |
 | Insufficient access | Explain the denied action while preserving allowed read access |
+
+## Daily investigation
+
+Open Overview, choose an interval and inspect its recorded outcomes and trend. Follow a series, protected action, recorded reason or time bucket into Activity. The resulting address preserves the exact inclusive bounds and filters. Open an explanation, then return to the same evidence page. Refresh a relative interval to advance both bounds; refreshing an absolute investigation keeps its interval fixed.
+
+Subject lookup and pivots open the existing typed context page. Completing behavioral profiles remains a separate product gate: preserve the investigation interval, combine events and decisions in a paginated direct history, group actual session/day context, and keep relationships accessible without scanning a long table.
 
 ## Acceptance walkthroughs
 

@@ -16,6 +16,8 @@ function activityUrl(value: string | null): string | null {
       "entity",
       "entity_kind",
       "name",
+      "reason",
+      "provenance",
       "from",
       "to",
       "range",
