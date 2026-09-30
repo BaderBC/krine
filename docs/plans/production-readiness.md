@@ -34,6 +34,8 @@ Start from a clear view of traffic, outcomes, changes and freshness. Every usefu
 
 User detail must communicate a coherent history, relevant associations, recent changes and evidence limits without requiring raw-JSON archaeology. Preserve exact identifiers, typed entity boundaries, immutable historical context, reversible relationship evidence and ordinary browser navigation. Charts require readable scales, labeled denominators, accessible alternatives, keyboard interaction and useful empty/loading/error/partial states.
 
+Treat the behavioral profile as its own complete workflow after Overview/Activity. Longer paginated tables alone do not satisfy it. Establish one bounded chronological event/decision cursor for an exact typed subject and range; retain direct attribution, show the subject's trend, group useful session/day context and keep relationships accessible beside the history. Preserve the originating investigation interval and offer an explicit way to widen it.
+
 ### 3. Strengthen routine policy and operator work
 
 Make check performance and observed policy outcomes easy to inspect and compare across time and versions without claiming causation or replay. Add useful investigation details and efficient filtering where the reference research and real tasks justify them. Preserve reviewed publication, explicit unknown behavior and safe mutation recovery.

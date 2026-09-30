@@ -12,6 +12,10 @@ The dashboard owns ADR 0018 and the Overview → Activity → typed subject → 
 
 Reserve compiler and Docker windows explicitly. The reusable compiler target is `/private/tmp/krine-observed-connection/target`; the native deployment and its data are protected. The shared Docker VM has only 2 CPU/2 GiB and cannot establish the supported production capacity. Root removed the unused main-checkout compiler target after verifying no open files, reclaiming about 4 GiB; source, evidence, native binaries, backups and volumes remain intact.
 
+The captured-reason extraction `d904dc4` passed fresh independent QA and is integrated. Core tests, strict Clippy and 333 independent comparisons with the original implementation establish byte/error equivalence; root's merged workspace run passes 50 non-store tests and compiles the actual server adapter. The unfinished demo generator/installation changes were excluded from that commit. Analytics is frozen in seven paths and under fresh QA, with dedicated security review still required. Neither the dashboard nor the seed workflow is accepted yet.
+
+The first browser review rejected excessive space above trends and an Activity view with no rows in its initial viewport. Those fixes belong to the first dashboard unit. A longer pair of Decisions/Events tables also does not complete user-behavior investigation: a separate next unit must deliver a bounded merged subject timeline, preserve investigation time, show a scoped trend and keep relationships visible. The first Overview/Activity acceptance must not erase that outstanding requirement.
+
 ## Authority and purpose
 
 Finish a capable, polished self-hosted trust platform that supports real operator investigation and enterprise operation. The founder's latest scope includes meaningful analytics, user-behavior investigation, representative seeding and enterprise readiness; an MVP feature checklist is insufficient. `docs/product/vision.md` and `docs/product/ux.md` govern product scope and taste; accepted ADRs govern architecture. New implementation notes do not override them. The lead orchestrator **does not implement production code**.
