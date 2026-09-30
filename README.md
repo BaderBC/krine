@@ -37,6 +37,8 @@ To try a complete protected application, run `./scripts/up.sh --local --example`
 
 Local HTTP enables development cookies and is intended for your machine. Follow the [deployment guide](docs/engineering/deployment.md) for HTTPS, proxy trust, backups and upgrades.
 
+For a separate installation with 28 days of fictional investigations, use the [representative demo](docs/engineering/demo.md). It includes policy changes, provider outages, shared clients and verification outcomes; it never imports into an existing deployment.
+
 ## Integrate an application
 
 The [SDK guide](docs/engineering/sdks.md) covers browser proofs, authoritative events, checks, durable retries and verification continuation. Your application must deduplicate its own protected business action, including after availability fallback.

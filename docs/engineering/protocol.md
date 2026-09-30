@@ -253,3 +253,19 @@ summary or null. Samples contain no customer metadata. The legacy
 `relationship_ids` mirrors those sampled IDs and is not a complete relationship
 inventory when `truncated` is true. See [ADR 0013](../decisions/0013-reversible-relationship-evidence.md)
 for correction cutoff, retention and current-metric semantics.
+
+## Demonstration installation context
+
+`GET /v1/admin/installation` requires the ordinary admin session and returns
+`{ sample_data: null }` on a normal installation. A completed, isolated demo
+returns `sample_data: { dataset_id, generator_version, from, to, seed, completed_at }`.
+Times are UTC epoch milliseconds. The seed is public reproducibility information,
+not a runtime credential. No HTTP operation can set this marker or import history.
+An incomplete demo import prevents the server from starting.
+
+Synthetic historical events and decisions carry a top-level
+`sample_data: { dataset_id, generator_version }` marker, preserved in exported
+payloads. Their existing `provenance` remains `backend` or `browser`: origin and
+trust provenance are separate concepts. Marker absence does not identify a
+real person or assert trustworthy evidence. The [demo workflow](demo.md) explains
+its isolated import, retained history and live-connection boundaries.

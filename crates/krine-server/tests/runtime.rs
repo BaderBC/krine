@@ -1101,3 +1101,29 @@ async fn saved_draft_changes_follow_policy_content() {
         assert_eq!(restored["has_draft_changes"], expected);
     }
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL, Valkey, ClickHouse and KRINE_* configuration"]
+async fn installation_metadata_is_authenticated_read_only_and_absent_normally() {
+    let runtime = Runtime::start().await;
+    let unauthenticated = runtime
+        .http
+        .get(format!("{}/v1/admin/installation", runtime.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    let normal = ok(runtime.admin(reqwest::Method::GET, "/installation", &unique())).await;
+    assert_eq!(normal, json!({"sample_data":null}));
+    let mutation = runtime
+        .admin(reqwest::Method::POST, "/installation", &unique())
+        .json(&json!({"sample_data":{"dataset_id":"forged"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mutation.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        ok(runtime.admin(reqwest::Method::GET, "/installation", &unique())).await,
+        normal
+    );
+}

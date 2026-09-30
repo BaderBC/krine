@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/krine-core", "crates/krine-server"]
+members = ["crates/krine-core", "crates/krine-server", "crates/krine-demo"]
 resolver = "3"
 
 [workspace.package]

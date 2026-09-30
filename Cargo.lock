@@ -840,6 +840,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "krine-demo"
+version = "0.1.0"
+dependencies = [
+ "krine-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "krine-server"
 version = "0.1.0"
 dependencies = [

@@ -16,10 +16,9 @@ async fn main() {
 async fn run() -> Result<(), String> {
     let config = Config::load()?;
     let bind = config.bind;
-    let app = App::connect(config).await.map_err(|_| {
-        "Required database initialization failed; check configuration and dependency health."
-            .to_owned()
-    })?;
+    let app = App::connect(config)
+        .await
+        .map_err(|error| krine_server::error::startup_message(error.as_ref()).to_owned())?;
     let mut router = krine_server::router(app.clone());
     if let Some(directory) = std::env::var_os("KRINE_DASHBOARD_DIR") {
         router = dashboard::attach(router, std::path::Path::new(&directory))?;
