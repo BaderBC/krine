@@ -52,6 +52,10 @@ Privileged transactions and replay must reauthorize under a shared PostgreSQL au
 
 Add actionable service/export/provider telemetry and operating guidance. Measure ingestion/check latency, resource bounds, query latency and export delay using an owned sustained workload while an operator investigates the dashboard. Test overload, outage, recovery, upgrades and backup restoration. Set and report an explicit supported workload and hardware profile from evidence; do not infer capacity from a brief burst or a populated chart.
 
+The operational review selects an optional metrics listener in the existing Axum process, protected by a separate host-managed scrape credential. Scrapes read bounded in-memory state; they do not query stores or reuse operator recovery authority. Finite request/provider/worker labels, freshness and unknown observations must stay explicit. A nullable per-revision outbox enqueue timestamp will measure current revision delay without relabeling original event acceptance. Runtime lifecycle supervision is a separate correctness unit: bounded drain and joined workers must distinguish successful shutdown from incomplete work.
+
+A reproducible owned workload will use the real SDKs, account separately for retries, rejected work and local fallback, and combine sustained traffic with retained history and investigation. A separate recovery run will transfer an encrypted bundle to a fresh runner/daemon, recover its key independently, import exact images and verify state before reopening ingress. Existing local restore evidence remains useful but does not substitute for that clean-target test. These are selected implementation directions, pending exact contracts and independent review; they add no mandatory monitoring service or high-availability claim.
+
 User-specific deployment, scale, retention, SSO and compliance requirements have been requested asynchronously. Until clarified, work targets one self-hosted company with multiple operators. This is a working assumption, not an invented compliance commitment.
 
 ## Acceptance
