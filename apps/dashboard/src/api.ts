@@ -1,3 +1,5 @@
+import { readPolicyResponse } from "./policy-response";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -81,7 +83,15 @@ export class Api {
           error?.details ?? [],
         );
       }
-      return body as T;
+      try {
+        return readPolicyResponse(path, init.method ?? "GET", body) as T;
+      } catch {
+        throw new ApiError(
+          response.status,
+          "invalid_response",
+          "Krine returned an unreadable policy. Retry to load it or recover the original request.",
+        );
+      }
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw new ApiError(

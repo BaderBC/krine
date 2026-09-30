@@ -25,6 +25,10 @@ identify the dataset. Canonical chunks are bounded by both 500 rows and 2 MiB.
 The manifest records hashes, exact counts, byte use and investigation examples.
 Verification regenerates the dataset and compares every artifact byte for byte.
 A changed historical generation contract requires a new generator version.
+Version 2 serializes policies from the validated core type, including its defaults.
+Version 1 remains byte-for-byte verifiable and importable into a new deployment;
+verification preserves its original omitted-default representation. Existing
+imports still require their original checkout and source hash for resume.
 
 Each event and decision carries top-level `sample_data` identity separately from
 its original browser/backend provenance. The importer creates its own random

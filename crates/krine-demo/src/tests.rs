@@ -312,3 +312,48 @@ fn history_ledger_counters_relationships_and_captured_evaluations_agree() {
     }
     assert_eq!(manifest.scenarios.len(), 8);
 }
+
+#[test]
+fn version_one_verification_preserves_original_bundle_bytes() {
+    let directory = Directory::new();
+    let mut cfg = config();
+    cfg.generator_version = "1".into();
+    cfg.validate().unwrap();
+    let manifest = generate(&directory.0, &cfg, false).unwrap();
+    assert_eq!(
+        output::digest(&fs::read(directory.0.join("manifest.json")).unwrap()),
+        "2924d0b642f89789f77e9bf1c9ece6bd4e86f2e536f36bf0b9cb3b7734b76eee"
+    );
+    assert_eq!(manifest, generate(&directory.0, &cfg, true).unwrap());
+    for row in rows(&directory.0, &manifest, "policy_versions") {
+        assert!(row["policy"].get("inputs").is_none());
+    }
+}
+
+#[test]
+fn new_bundles_serialize_every_policy_from_its_validated_type() {
+    let directory = Directory::new();
+    let cfg = config();
+    assert_eq!(cfg.generator_version, "2");
+    let manifest = generate(&directory.0, &cfg, false).unwrap();
+    let mut policies = Vec::new();
+    for row in rows(&directory.0, &manifest, "checks") {
+        policies.push(row["draft"].clone());
+    }
+    for row in rows(&directory.0, &manifest, "policy_versions") {
+        policies.push(row["policy"].clone());
+    }
+    for row in rows(&directory.0, &manifest, "history_v2") {
+        let payload: Value = serde_json::from_str(row["payload"].as_str().unwrap()).unwrap();
+        if let Some(policy) = payload.get("policy") {
+            policies.push(policy.clone());
+        }
+    }
+    assert_eq!(policies.len(), 207);
+    for value in policies {
+        let policy: Policy = serde_json::from_value(value.clone()).unwrap();
+        ValidatedPolicy::try_from(policy.clone()).unwrap();
+        assert_eq!(value, serde_json::to_value(policy).unwrap());
+        assert_eq!(value["inputs"], serde_json::json!({}));
+    }
+}

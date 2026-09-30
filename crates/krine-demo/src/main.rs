@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const VERSION: &str = "1";
+const VERSION: &str = "2";
 const DAY: i64 = 86_400_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ struct Configuration {
 }
 impl Configuration {
     fn validate(&self) -> Result<()> {
-        if self.generator_version != VERSION
+        if !matches!(self.generator_version.as_str(), "1" | "2")
             || self.seed.is_empty()
             || self.seed.len() > 128
             || !self.seed.bytes().all(|b| b.is_ascii_graphic())

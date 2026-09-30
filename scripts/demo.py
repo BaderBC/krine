@@ -111,7 +111,7 @@ def verify_dataset(path):
     command(["cargo", "run", "--locked", "--offline", "-p", "krine-demo", "--", "verify", "--output", str(path)], timeout=900)
     raw = read_file(path / "manifest.json", 4 * 1024 * 1024)
     manifest = json.loads(raw)
-    require(manifest["schema_version"] == 1 and manifest["configuration"]["generator_version"] == "1", "Unsupported dataset version")
+    require(manifest["schema_version"] == 1 and manifest["configuration"]["generator_version"] in ("1", "2"), "Unsupported dataset version")
     require(re.fullmatch(r"demo_[a-f0-9]{24}", manifest["dataset_id"]), "Invalid dataset identity")
     total = 0
     for index, chunk in enumerate(manifest["chunks"]):
@@ -289,7 +289,7 @@ class Deployment:
 
     def claim(self, manifest):
         existing = self.sql("SELECT row_to_json(s) FROM demo_import_state s;")
-        expected = {"dataset_id": manifest["dataset_id"], "generator_version": "1", "seed": manifest["configuration"]["seed"],
+        expected = {"dataset_id": manifest["dataset_id"], "generator_version": manifest["configuration"]["generator_version"], "seed": manifest["configuration"]["seed"],
                     "range_from": manifest["from"], "range_to": manifest["to"], "manifest_hash": self.state["manifest_hash"], "owner_id": self.state["owner_id"]}
         if existing:
             actual = json.loads(existing)

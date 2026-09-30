@@ -218,6 +218,39 @@ class OwnershipTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_supported_dataset_versions_are_explicit_and_preserve_manifest_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            for version in ("1", "2", "3"):
+                manifest = {"schema_version": 1, "configuration": {"generator_version": version, "max_bytes": 1000},
+                            "dataset_id": "demo_" + "a" * 24, "bytes": 0, "chunks": []}
+                raw = demo.canonical(manifest).encode()
+                (path / "manifest.json").write_bytes(raw)
+                with patch.object(demo, "command") as verify:
+                    if version == "3":
+                        with self.assertRaisesRegex(RuntimeError, "Unsupported dataset version"):
+                            demo.verify_dataset(path)
+                    else:
+                        actual, actual_hash = demo.verify_dataset(path)
+                        self.assertEqual(actual, manifest)
+                        self.assertEqual(actual_hash, demo.digest(raw))
+                    verify.assert_called_once()
+                self.assertEqual((path / "manifest.json").read_bytes(), raw)
+
+    def test_claim_uses_the_manifest_generator_version_without_replacing_ownership(self):
+        deployment = demo.Deployment.__new__(demo.Deployment)
+        deployment.state = {"manifest_hash": "manifest", "owner_id": "owner"}
+        manifest = {"dataset_id": "dataset", "configuration": {"generator_version": "2", "seed": "seed"}, "from": 1, "to": 2}
+        existing = {"dataset_id": "dataset", "generator_version": "2", "seed": "seed", "range_from": 1,
+                    "range_to": 2, "manifest_hash": "manifest", "owner_id": "owner", "completed_at": 3}
+        with patch.object(deployment, "sql", return_value=demo.canonical(existing)) as sql:
+            self.assertTrue(deployment.claim(manifest))
+            sql.assert_called_once_with("SELECT row_to_json(s) FROM demo_import_state s;")
+        existing["generator_version"] = "1"
+        with patch.object(deployment, "sql", return_value=demo.canonical(existing)):
+            with self.assertRaisesRegex(RuntimeError, "ownership or dataset changed"):
+                deployment.claim(manifest)
+
     def test_freshness_rejects_hot_future_and_stale_fixtures(self):
         now = 1_790_000_000_000
         manifest = {"configuration": {"anchor_ms": now}, "from": now - 28 * 86_400_000, "to": now - 600_000}

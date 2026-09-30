@@ -16,6 +16,7 @@ use std::{
     time::Instant,
 };
 
+mod policy_contract;
 mod protected_application;
 
 #[derive(Default)]

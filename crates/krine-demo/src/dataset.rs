@@ -219,7 +219,7 @@ fn attempts(config: &Configuration) -> Vec<Attempt> {
     attempts.sort_by_key(|attempt| (attempt.at, attempt.index));
     attempts
 }
-fn policy(check: &str, version: i64) -> Result<(Value, ValidatedPolicy)> {
+fn policy(config: &Configuration, check: &str, version: i64) -> Result<(Value, ValidatedPolicy)> {
     let (rule, metric, comparison, value, action) = match check {
         "can_claim_trial" => (
             "shared_client",
@@ -238,7 +238,14 @@ fn policy(check: &str, version: i64) -> Result<(Value, ValidatedPolicy)> {
         ),
     };
     let value = json!({"schema_version":1,"rules":[{"id":rule,"condition":{"op":"compare","left":{"source":"metric","name":metric,"version":1},"comparison":comparison,"value":value},"then":action,"on_unknown":"DENY"}],"otherwise":"ALLOW"});
-    let validated = ValidatedPolicy::try_from(serde_json::from_value::<Policy>(value.clone())?)?;
+    let policy: Policy = serde_json::from_value(value.clone())?;
+    let validated = ValidatedPolicy::try_from(policy.clone())?;
+    // Version 1 verification must reproduce the original immutable bundle bytes.
+    let value = if config.generator_version == "1" {
+        value
+    } else {
+        serde_json::to_value(policy)?
+    };
     Ok((value, validated))
 }
 fn observe(snapshot: &mut Snapshot, name: &str, value: Scalar) {
@@ -391,7 +398,7 @@ pub fn generate(config: &Configuration, output: &mut Output) -> Result<()> {
         } else {
             1
         };
-        let (policy, validated) = policy(job.check, version)?;
+        let (policy, validated) = policy(config, job.check, version)?;
         let mut active = by_client[job.client.as_str()]
             .iter()
             .copied()
@@ -543,11 +550,11 @@ pub fn generate(config: &Configuration, output: &mut Output) -> Result<()> {
     }
     for check in CHECKS {
         let version = if check == CHECKS[0] { 2 } else { 1 };
-        output.row("postgres","checks",json!({"name":check,"description":match check {"can_claim_trial"=>"Sample: investigate shared clients and policy changes.","can_login"=>"Sample: distinguish unknown provider evidence from high risk.",_=>"Sample: follow verification outcomes and missing browser signals."},"draft":policy(check,version)?.0,"draft_revision":version,"active_version":version,"restored_from_version":null,"created_at":config.anchor_ms-28*DAY,"updated_at":if version==2 {config.anchor_ms-7*DAY}else{config.anchor_ms-28*DAY}}))?;
+        output.row("postgres","checks",json!({"name":check,"description":match check {"can_claim_trial"=>"Sample: investigate shared clients and policy changes.","can_login"=>"Sample: distinguish unknown provider evidence from high risk.",_=>"Sample: follow verification outcomes and missing browser signals."},"draft":policy(config,check,version)?.0,"draft_revision":version,"active_version":version,"restored_from_version":null,"created_at":config.anchor_ms-28*DAY,"updated_at":if version==2 {config.anchor_ms-7*DAY}else{config.anchor_ms-28*DAY}}))?;
     }
     for check in CHECKS {
         for version in 1..=if check == CHECKS[0] { 2 } else { 1 } {
-            output.row("postgres","policy_versions",json!({"check_name":check,"version":version,"policy":policy(check,version)?.0,"published_at":if version==2 {config.anchor_ms-7*DAY}else{config.anchor_ms-28*DAY},"restored_from_version":null}))?;
+            output.row("postgres","policy_versions",json!({"check_name":check,"version":version,"policy":policy(config,check,version)?.0,"published_at":if version==2 {config.anchor_ms-7*DAY}else{config.anchor_ms-28*DAY},"restored_from_version":null}))?;
         }
     }
     for ((kind, _), entity) in entities {

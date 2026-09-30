@@ -52,10 +52,10 @@ def api(base, state, manifest, completed_at):
     demo.require(request("/v1/admin/session", {"password": secret})[0] == 200, "Demo operator login failed")
     status, installation = request("/v1/admin/installation")
     marker = installation["sample_data"] if status == 200 else None
-    demo.require(marker and marker["dataset_id"] == manifest["dataset_id"] and marker["generator_version"] == "1"
+    demo.require(marker and marker["dataset_id"] == manifest["dataset_id"] and marker["generator_version"] == manifest["configuration"]["generator_version"]
                  and marker["seed"] == manifest["configuration"]["seed"] and marker["from"] == manifest["from"]
                  and marker["to"] == manifest["to"] and marker["completed_at"] == completed_at, "Completed installation metadata differs")
-    expected = {"dataset_id": manifest["dataset_id"], "generator_version": "1"}
+    expected = {"dataset_id": manifest["dataset_id"], "generator_version": manifest["configuration"]["generator_version"]}
     for scenario in manifest["scenarios"]:
         # Include the last example so policy publication and relationship
         # correction can be inspected on both sides of their boundary.

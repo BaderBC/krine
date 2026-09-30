@@ -74,6 +74,12 @@ at most 500 rows and 2 MiB regardless of scale. Generation fails rather than
 exceeding its budget. The manifest distinguishes logical history, physical rows,
 checks, outcomes, reasons, provenance, entities and UTC days.
 
+New bundles use generator version 2 and include every policy default. The current
+verifier also accepts untouched version 1 bundles, which can be imported into a
+new owned deployment. It does not rewrite their chunks or manifests. Existing
+owner records remain pinned to their original generator source; keep that checkout
+for resume, including already completed imports.
+
 ## Resume or verify
 
 A failed command preserves its private owner record, data and completed chunks.

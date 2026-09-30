@@ -49,12 +49,28 @@ impl List {
 pub fn cursor(at: i64, id: &str) -> String {
     URL_SAFE_NO_PAD.encode(serde_json::to_vec(&(at, id)).expect("cursor serializes"))
 }
-// JSONB comparison ignores object key order and numeric spelling, but preserves
-// policy structure. An unpublished draft has no active policy to match.
-const CHECK_COLUMNS: &str = "checks.*, draft IS DISTINCT FROM (SELECT policy FROM policy_versions WHERE check_name=checks.name AND version=checks.active_version) AS has_draft_changes";
+// Read both documents in the same statement. Serde defaults affect policy
+// meaning; a legacy omitted default is not a draft change.
+const CHECK_COLUMNS: &str = "checks.*, (SELECT policy FROM policy_versions WHERE check_name=checks.name AND version=checks.active_version) AS active_policy";
 
-fn detail(row: &sqlx::postgres::PgRow) -> Value {
-    json!({"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"active_version":row.get::<Option<i64>,_>("active_version"),"draft_revision":row.get::<i64,_>("draft_revision"),"has_draft_changes":row.get::<bool,_>("has_draft_changes"),"draft":row.get::<Value,_>("draft"),"updated_at":row.get::<i64,_>("updated_at"),"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")})
+fn stored_policy(value: Value) -> Result<Policy> {
+    let policy: Policy = serde_json::from_value(value).map_err(|_| ApiError::unavailable())?;
+    ValidatedPolicy::try_from(policy.clone()).map_err(|_| ApiError::unavailable())?;
+    Ok(policy)
+}
+
+fn detail(row: &sqlx::postgres::PgRow) -> Result<Value> {
+    let draft = stored_policy(row.get("draft"))?;
+    let active = row
+        .get::<Option<Value>, _>("active_policy")
+        .map(stored_policy)
+        .transpose()?;
+    if row.get::<Option<i64>, _>("active_version").is_some() && active.is_none() {
+        return Err(ApiError::unavailable());
+    }
+    Ok(
+        json!({"name":row.get::<String,_>("name"),"description":row.get::<String,_>("description"),"active_version":row.get::<Option<i64>,_>("active_version"),"draft_revision":row.get::<i64,_>("draft_revision"),"has_draft_changes":active.as_ref()!=Some(&draft),"draft":draft,"updated_at":row.get::<i64,_>("updated_at"),"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")}),
+    )
 }
 pub async fn get_check(State(app): State<App>, Path(name): Path<String>) -> Result<Json<Value>> {
     let row = sqlx::query(&format!("SELECT {CHECK_COLUMNS} FROM checks WHERE name=$1"))
@@ -62,7 +78,7 @@ pub async fn get_check(State(app): State<App>, Path(name): Path<String>) -> Resu
         .fetch_optional(&app.db)
         .await?
         .ok_or_else(ApiError::absent)?;
-    Ok(Json(detail(&row)))
+    Ok(Json(detail(&row)?))
 }
 pub async fn list_checks(
     State(app): State<App>,
@@ -97,7 +113,18 @@ pub async fn list_checks(
     } else {
         None
     };
-    let items=rows.iter().take(limit as usize).map(|r|json!({"name":r.get::<String,_>("name"),"description":r.get::<String,_>("description"),"active_version":r.get::<Option<i64>,_>("active_version"),"draft_revision":r.get::<i64,_>("draft_revision"),"has_draft_changes":r.get::<bool,_>("has_draft_changes"),"updated_at":r.get::<i64,_>("updated_at"),"recent":null})).collect::<Vec<_>>();
+    let items = rows
+        .iter()
+        .take(limit as usize)
+        .map(|row| {
+            let mut item = detail(row)?;
+            let object = item.as_object_mut().expect("check detail is an object");
+            object.remove("draft");
+            object.remove("restored_from_version");
+            object.insert("recent".into(), Value::Null);
+            Ok(item)
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(Json(json!({"items":items,"next_cursor":next})))
 }
 pub(crate) async fn mutation(
@@ -174,7 +201,7 @@ pub async fn create_check(
     }
     let now = util::now();
     let row=sqlx::query(&format!("INSERT INTO checks(name,description,draft,created_at,updated_at) VALUES($1,$2,$3,$4,$4) ON CONFLICT DO NOTHING RETURNING {CHECK_COLUMNS}")).bind(input.name).bind(input.description).bind(json!(Policy::default())).bind(now).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("input_conflict"))?;
-    finish(tx, key, digest, detail(&row)).await
+    finish(tx, key, digest, detail(&row)?).await
 }
 fn description(text: &str) -> Result<()> {
     if text.len() > 1024 {
@@ -208,7 +235,7 @@ pub async fn save_draft(
         return Ok(Json(v));
     }
     let row=sqlx::query(&format!("UPDATE checks SET draft=$1,description=$2,draft_revision=draft_revision+1,updated_at=$3,restored_from_version=NULL WHERE name=$4 AND draft_revision=$5 RETURNING {CHECK_COLUMNS}")).bind(json!(input.policy)).bind(input.description).bind(util::now()).bind(name).bind(input.revision).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("revision_conflict"))?;
-    finish(tx, key, digest, detail(&row)).await
+    finish(tx, key, digest, detail(&row)?).await
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -292,7 +319,7 @@ pub async fn restore(
             .await?
             .ok_or_else(ApiError::absent)?;
     let row=sqlx::query(&format!("UPDATE checks SET draft=$1,draft_revision=draft_revision+1,restored_from_version=$2,updated_at=$3 WHERE name=$4 AND draft_revision=$5 RETURNING {CHECK_COLUMNS}")).bind(policy).bind(input.version).bind(util::now()).bind(name).bind(input.revision).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::conflict("revision_conflict"))?;
-    finish(tx, key, digest, detail(&row)).await
+    finish(tx, key, digest, detail(&row)?).await
 }
 pub async fn versions(
     State(app): State<App>,
@@ -308,7 +335,7 @@ pub async fn versions(
     } else {
         None
     };
-    let items=rows.iter().take(limit as usize).map(|r|json!({"version":r.get::<i64,_>("version"),"published_at":r.get::<i64,_>("published_at"),"policy":r.get::<Value,_>("policy")})).collect::<Vec<_>>();
+    let items=rows.iter().take(limit as usize).map(|r|Ok(json!({"version":r.get::<i64,_>("version"),"published_at":r.get::<i64,_>("published_at"),"policy":stored_policy(r.get("policy"))?}))).collect::<Result<Vec<_>>>()?;
     Ok(Json(json!({"items":items,"next_cursor":next})))
 }
 pub async fn metrics(
@@ -340,6 +367,6 @@ pub async fn version(
 ) -> Result<Json<Value>> {
     let row=sqlx::query("SELECT version,published_at,policy,restored_from_version FROM policy_versions WHERE check_name=$1 AND version=$2").bind(name).bind(version).fetch_optional(&app.db).await?.ok_or_else(ApiError::absent)?;
     Ok(Json(
-        json!({"version":row.get::<i64,_>("version"),"published_at":row.get::<i64,_>("published_at"),"policy":row.get::<Value,_>("policy"),"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")}),
+        json!({"version":row.get::<i64,_>("version"),"published_at":row.get::<i64,_>("published_at"),"policy":stored_policy(row.get("policy"))?,"restored_from_version":row.get::<Option<i64>,_>("restored_from_version")}),
     ))
 }
