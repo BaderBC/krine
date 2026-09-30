@@ -22,7 +22,23 @@ pub async fn detail(
     Path((kind, id)): Path<(String, String)>,
     query: std::result::Result<Query<EntityQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>> {
-    if !["client", "session", "user", "ip"].contains(&kind.as_str()) {
+    let (mut context, _) = context(&app, &kind, &id, query).await?;
+    let (decisions, events) = tokio::try_join!(
+        history::recent(&app, "decision", &kind, &id),
+        history::recent(&app, "event", &kind, &id)
+    )?;
+    context["recent_decisions"] = decisions;
+    context["recent_events"] = events;
+    Ok(Json(context))
+}
+
+pub(crate) async fn context(
+    app: &App,
+    kind: &str,
+    id: &str,
+    query: std::result::Result<Query<EntityQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<(Value, i64)> {
+    if !["client", "session", "user", "ip"].contains(&kind) {
         return Err(ApiError::absent());
     }
     let Query(query) = query.map_err(|_| ApiError::invalid("Invalid entity query."))?;
@@ -34,19 +50,19 @@ pub async fn detail(
     let mut tx = app.db.begin().await?;
     let entity =
         sqlx::query("SELECT first_seen,client_id,metadata FROM entities WHERE kind=$1 AND id=$2")
-            .bind(&kind)
-            .bind(&id)
+            .bind(kind)
+            .bind(id)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(ApiError::absent)?;
     let first_seen: i64 = entity.get("first_seen");
     let metadata: Value = entity.get("metadata");
     let client = if kind == "client" {
-        Some(id.clone())
+        Some(id.to_owned())
     } else {
         entity.get::<Option<String>, _>("client_id")
     };
-    let ready = match projection::locked_ready(&app, &mut tx).await {
+    let ready = match projection::locked_ready(app, &mut tx).await {
         Ok(ready) => Some(ready),
         Err(error) if error.dependency == Some("valkey") => None,
         Err(error) => return Err(error),
@@ -102,18 +118,18 @@ pub async fn detail(
             );
         }
     }
-    let hot = match kind.as_str() {
+    let hot = match kind {
         "session" => Some(("session.event_count_5m", "session_id")),
         "ip" => Some(("ip.event_count_5m", "ip")),
         _ => None,
     };
     if let Some((metric, key)) = hot {
         let value = match &ready {
-            Some(ready) => projection::count(&app, ready, key, &id, at).await,
+            Some(ready) => projection::count(app, ready, key, id, at).await,
             None => Err(ApiError::valkey()),
         };
         let valid = match &ready {
-            Some(ready) => projection::validate(&app, ready).await.is_ok(),
+            Some(ready) => projection::validate(app, ready).await.is_ok(),
             None => false,
         };
         if let Ok(value) = value
@@ -131,7 +147,7 @@ pub async fn detail(
     if let Some(client) = &client {
         relations.push("client_id=").push_bind(client);
     } else if kind == "user" {
-        relations.push("user_id=").push_bind(&id);
+        relations.push("user_id=").push_bind(id);
     } else {
         relations.push("false");
     }
@@ -153,14 +169,12 @@ pub async fn detail(
         .map(events::association_json)
         .collect::<Vec<_>>();
     tx.commit().await?;
-    let (decisions, events) = tokio::try_join!(
-        history::recent(&app, "decision", &kind, &id),
-        history::recent(&app, "event", &kind, &id)
-    )?;
-    Ok(Json(
-        json!({"kind":kind,"id":id,"first_seen":first_seen,"metadata":metadata,"metrics":snapshot.metrics,"associations":associations,"associations_next_cursor":next,"recent_decisions":decisions,"recent_events":events}),
+    Ok((
+        json!({"kind":kind,"id":id,"first_seen":first_seen,"metadata":metadata,"metrics":snapshot.metrics,"associations":associations,"associations_next_cursor":next}),
+        at,
     ))
 }
+
 fn known(snapshot: &mut Snapshot, name: &str, value: Scalar) {
     if let Some(metric) = snapshot.metrics.get_mut(name) {
         metric.state = Observation::Known { value };

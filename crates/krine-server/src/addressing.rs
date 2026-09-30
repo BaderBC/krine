@@ -2,7 +2,7 @@
 use crate::{
     App, admin, entities,
     error::{ApiError, Result},
-    history,
+    history, investigation,
     json::StrictJson,
     relationships, util,
 };
@@ -32,6 +32,11 @@ pub fn routes() -> Router<App> {
         .route("/v1/admin/lookup/checks/versions/{version}", get(version))
         .route("/v1/admin/lookup/events", get(event))
         .route("/v1/admin/lookup/entities", get(entity))
+        .route("/v1/admin/lookup/entities/context", get(entity_context))
+        .route(
+            "/v1/admin/lookup/entities/timeline",
+            get(investigation::timeline),
+        )
         .route(
             "/v1/admin/lookup/entities/relationships",
             get(entity_relationships),
@@ -98,7 +103,7 @@ struct RelationshipPage {
     limit: Option<i64>,
     cursor: Option<String>,
 }
-fn entity_key(kind: String, id: String) -> Result<(String, String)> {
+pub(crate) fn entity_key(kind: String, id: String) -> Result<(String, String)> {
     match kind.as_str() {
         "user" => util::user_identifier(&id)?,
         "client" | "session" => util::identifier(&id)?,
@@ -173,6 +178,21 @@ async fn entity(state: State<App>, query: Selection<Entity>) -> Result<Json<Valu
         })),
     )
     .await
+}
+async fn entity_context(state: State<App>, query: Selection<Entity>) -> Result<Json<Value>> {
+    let selected = selection(query)?;
+    let (kind, id) = entity_key(selected.kind, selected.id)?;
+    let (mut context, at) = entities::context(
+        &state.0,
+        &kind,
+        &id,
+        Ok(Query(entities::EntityQuery {
+            associations_cursor: selected.associations_cursor,
+        })),
+    )
+    .await?;
+    context["observed_at"] = serde_json::json!(at);
+    Ok(Json(context))
 }
 async fn entity_relationships(
     state: State<App>,

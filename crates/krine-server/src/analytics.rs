@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
 
-const SAFE_INTEGER: i64 = 9_007_199_254_740_991;
-const MAX_RANGE: i64 = 31 * 86_400_000;
+pub(crate) const SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+pub(crate) const MAX_RANGE: i64 = 31 * 86_400_000;
 const MAX_BUCKETS: i64 = 400;
 const SCALARS: &[&str] = &[
     "check",
@@ -29,12 +29,10 @@ const SCALARS: &[&str] = &[
     "ip",
 ];
 // Never move a mutable time/subject/outcome predicate ahead of replacement.
-const QUERY_SETTINGS: &str = "optimize_move_to_prewhere=0,optimize_move_to_prewhere_if_final=0,\
+pub(crate) const QUERY_BUDGET: &str = "optimize_move_to_prewhere=0,optimize_move_to_prewhere_if_final=0,\
 max_execution_time=3,timeout_before_checking_execution_speed=0,timeout_overflow_mode='throw',max_memory_usage=268435456,max_threads=2,\
 max_rows_to_read=20000000,max_bytes_to_read=2147483648,read_overflow_mode='throw',\
-max_rows_to_group_by=100000,group_by_overflow_mode='throw',\
 max_rows_to_sort=100000,sort_overflow_mode='throw',\
-max_result_rows=1620,max_result_bytes=1048576,result_overflow_mode='throw',\
 output_format_json_quote_64bit_integers=0";
 
 fn scalar_expression(field: &str) -> String {
@@ -192,19 +190,26 @@ pub async fn activity(
     query: std::result::Result<Query<ActivityQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>> {
     let Query(query) = query.map_err(|_| ApiError::invalid("Invalid analytics query."))?;
-    let (kind, mut filters, width) = query.prepare()?;
-    let _permit = app
+    let (kind, filters, width) = query.prepare()?;
+    let permit = app
         .analytics_queries
-        .try_acquire()
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| ApiError::unavailable())?;
+    app.analytical_reads
+        .clone()
+        .run(permit, activity_read(app, kind, filters, width))
+        .await
+}
+
+async fn activity_read(
+    app: App,
+    kind: String,
+    mut filters: history::Filters,
+    width: i64,
+) -> Result<Json<Value>> {
     let retention = history::retention(&app).await?;
-    let delivery = sqlx::query("SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint AS observed_at, COUNT(*) AS pending_records, MIN(at) AS oldest_record_accepted_at FROM delivery_outbox WHERE exported_at IS NULL")
-        .fetch_one(&app.db).await?;
-    let as_of: i64 = delivery.get("observed_at");
-    let pending: i64 = delivery.get("pending_records");
-    if !(0..=SAFE_INTEGER).contains(&as_of) || !(0..=SAFE_INTEGER).contains(&pending) {
-        return Err(ApiError::unavailable());
-    }
+    let (as_of, delivery) = delivery(&app).await?;
     let from = filters.from.ok_or_else(ApiError::unavailable)?;
     let to = filters.to.ok_or_else(ApiError::unavailable)?;
     let effective_from = from.max(retention.cutoff);
@@ -215,8 +220,7 @@ pub async fn activity(
     let mut response = json!({"schema_version":1,"scope":scope,
         "range":{"from":from,"to":to,"time_basis":"accepted_at","effective_from":null,"effective_to":null,"bucket_ms":width},
         "as_of":as_of,"retention":retention.description(),"visibility":"asynchronous",
-        "delivery":{"scope":"installation","observed_at":as_of,"pending_records":pending,
-            "oldest_record_accepted_at":delivery.get::<Option<i64>,_>("oldest_record_accepted_at")},
+        "delivery":delivery,
         "totals":null,"buckets":[],"breakdowns":{}});
     if effective_from > effective_to {
         return Ok(Json(response));
@@ -246,6 +250,21 @@ pub async fn activity(
     Ok(Json(response))
 }
 
+pub(crate) async fn delivery(app: &App) -> Result<(i64, Value)> {
+    let delivery = sqlx::query("SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint AS observed_at, COUNT(*) AS pending_records, MIN(at) AS oldest_record_accepted_at FROM delivery_outbox WHERE exported_at IS NULL")
+        .fetch_one(&app.db).await?;
+    let as_of: i64 = delivery.get("observed_at");
+    let pending: i64 = delivery.get("pending_records");
+    if !(0..=SAFE_INTEGER).contains(&as_of) || !(0..=SAFE_INTEGER).contains(&pending) {
+        return Err(ApiError::unavailable());
+    }
+    Ok((
+        as_of,
+        json!({"scope":"installation","observed_at":as_of,"pending_records":pending,
+        "oldest_record_accepted_at":delivery.get::<Option<i64>,_>("oldest_record_accepted_at")}),
+    ))
+}
+
 pub(crate) fn query_sql(
     app: &App,
     kind: &str,
@@ -272,7 +291,8 @@ pub(crate) fn query_sql(
     sql.push_str(" ) GROUP BY section,bucket,value \
         QUALIFY section='bucket' OR row_number() OVER (PARTITION BY section ORDER BY n DESC,value ASC NULLS LAST)<=10 \
         ORDER BY section,bucket,n DESC,value ASC NULLS LAST SETTINGS ");
-    sql.push_str(QUERY_SETTINGS);
+    sql.push_str(QUERY_BUDGET);
+    sql.push_str(",max_rows_to_group_by=100000,group_by_overflow_mode='throw',max_result_rows=1620,max_result_bytes=1048576,result_overflow_mode='throw'");
     sql.push_str(" FORMAT JSONEachRow");
     (sql, params)
 }

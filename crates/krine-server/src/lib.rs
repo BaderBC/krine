@@ -1,5 +1,6 @@
 mod addressing;
 mod admin;
+mod analytical_reads;
 mod analytics;
 mod auth;
 mod browser;
@@ -13,10 +14,12 @@ mod events;
 mod explanation;
 mod history;
 mod installation;
+mod investigation;
 mod json;
 mod projection;
 mod provider_http;
 mod providers;
+mod query;
 mod relationships;
 mod retention;
 mod util;
@@ -44,10 +47,17 @@ pub struct App {
     pub redis: ConnectionManager,
     pub http: reqwest::Client,
     analytics_queries: Arc<tokio::sync::Semaphore>,
+    analytical_reads: Arc<analytical_reads::Reads>,
     #[cfg(test)]
     provider_test: ProviderTest,
 }
 impl App {
+    /// Drain caller-abandoned analytical reads before terminating the runtime.
+    pub async fn shutdown_analytics(&self) {
+        self.analytics_queries.close();
+        self.analytical_reads.shutdown().await;
+    }
+
     pub async fn connect(
         config: Config,
     ) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -119,6 +129,7 @@ impl App {
             redis,
             http,
             analytics_queries: Arc::new(tokio::sync::Semaphore::new(2)),
+            analytical_reads: Arc::new(analytical_reads::Reads::default()),
             #[cfg(test)]
             provider_test: ProviderTest::default(),
         })
