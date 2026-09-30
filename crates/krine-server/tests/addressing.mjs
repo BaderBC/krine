@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 const fixture = JSON.parse(process.env.KRINE_ADDRESSING_FIXTURE);
 assert.equal(new URL(fixture.url).hostname, "127.0.0.1");
+assert.match(fixture.actor_id, /^op_/);
 let assertions = 0;
 async function send(
   path,
@@ -21,6 +22,7 @@ async function send(
       cookie: fixture.cookie,
       "x-csrf-token": fixture.csrf,
       "idempotency-key": key,
+      "x-krine-operator-id": fixture.actor_id,
     });
   if (auth === "backend")
     headers.authorization = `Bearer ${fixture.serverSecret}`;
@@ -46,6 +48,7 @@ async function send(
   assertions++;
   return result;
 }
+assert.equal((await send("/session")).actor_id, fixture.actor_id);
 const query = (values) => new URLSearchParams(values);
 const check = (name, suffix = "") =>
   `/lookup/checks${suffix}?${query({ name })}`;

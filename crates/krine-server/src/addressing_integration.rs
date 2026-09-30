@@ -16,6 +16,7 @@ async fn query_selectors_preserve_identifiers_and_logical_mutation_identity() {
         "url": fixture.url,
         "cookie": fixture.cookie,
         "csrf": fixture.csrf,
+        "actor_id": fixture.actor_id,
         "origin": fixture.app.config.admin_origin,
         "browserOrigin": fixture.app.config.allowed_origins[0],
         "publicKey": fixture.app.config.public_key,
