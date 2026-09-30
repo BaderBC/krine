@@ -103,3 +103,41 @@ impl From<krine_core::ValidationError> for ApiError {
     }
 }
 pub type Result<T> = std::result::Result<T, ApiError>;
+
+/// An offline importer owns this installation until its read-back completes.
+#[derive(Debug)]
+pub(crate) struct IncompleteDemoImport;
+impl std::fmt::Display for IncompleteDemoImport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Demonstration import is incomplete; resume its isolated importer.")
+    }
+}
+impl std::error::Error for IncompleteDemoImport {}
+
+/// Startup diagnostics must not format arbitrary database errors or credentials.
+pub fn startup_message(error: &(dyn std::error::Error + 'static)) -> &'static str {
+    if error.is::<IncompleteDemoImport>() {
+        "Demonstration import is incomplete; resume its isolated importer."
+    } else {
+        "Required database initialization failed; check configuration and dependency health."
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    #[test]
+    fn only_the_known_import_state_has_an_actionable_diagnostic() {
+        assert_eq!(
+            startup_message(&IncompleteDemoImport),
+            "Demonstration import is incomplete; resume its isolated importer."
+        );
+        let arbitrary = std::io::Error::other("postgres://operator:secret@example.test/krine");
+        assert_eq!(
+            startup_message(&arbitrary),
+            "Required database initialization failed; check configuration and dependency health."
+        );
+        let similar = std::io::Error::other("Demonstration import is incomplete; password=secret");
+        assert_eq!(startup_message(&similar), startup_message(&arbitrary));
+    }
+}
