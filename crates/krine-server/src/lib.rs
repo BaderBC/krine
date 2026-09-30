@@ -12,6 +12,7 @@ pub mod error;
 mod events;
 mod explanation;
 mod history;
+mod installation;
 mod json;
 mod projection;
 mod provider_http;
@@ -83,6 +84,14 @@ impl App {
             sqlx::query("SET krine.writer_generation='5'")
                 .execute(&mut *connection)
                 .await?;
+        }
+        let incomplete_demo: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM demo_import_state WHERE completed_at IS NULL)",
+        )
+        .fetch_one(&db)
+        .await?;
+        if incomplete_demo {
+            return Err(error::IncompleteDemoImport.into());
         }
         history::configure_retention(&db, config.history_retention_days)
             .await
@@ -166,6 +175,7 @@ pub fn router(app: App) -> Router {
             post(relationships::restore),
         )
         .route("/v1/admin/setup", get(connection::setup))
+        .route("/v1/admin/installation", get(installation::detail))
         .route(
             "/v1/admin/credentials",
             get(credentials::list).post(credentials::create),

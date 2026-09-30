@@ -12,3 +12,4 @@ playwright-report/
 test-results/
 deploy/secrets/
 *.log
+__pycache__/
