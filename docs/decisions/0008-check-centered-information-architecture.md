@@ -1,6 +1,6 @@
 # ADR 0008: Check-centered information architecture
 
-**Status:** Accepted
+**Status:** Accepted; landing-page and chart-deferral choices superseded by [ADR 0018](0018-operator-overview-and-investigation.md)
 
 ## Context
 

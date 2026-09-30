@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { api, errorMessage, mutation } from "./api";
 import { Loading, Notice } from "./shared";
+import { InstallationContext } from "./Overview";
 
 export function App() {
   const [initialized, setInitialized] = useState(false);
@@ -36,7 +37,7 @@ export function App() {
       : location.pathname.startsWith("/inspect/") ||
           location.pathname.startsWith("/entities/")
         ? "activity"
-        : location.pathname.split("/")[1] || "checks";
+        : location.pathname.split("/")[1] || "overview";
   useEffect(() => {
     document.title = `${section.replace(/^./, (value) => value.toUpperCase())} · Krine`;
   }, [section]);
@@ -99,12 +100,13 @@ export function App() {
         Skip to content
       </a>
       <header className="site-header">
-        <Link className="brand" to="/checks">
+        <Link className="brand" to="/">
           Krine<span className="deployment">{window.location.host}</span>
         </Link>
         {authenticated && (
           <>
             <nav aria-label="Main navigation">
+              <Link to="/" aria-current={section === "overview" ? "page" : undefined} className={section === "overview" ? "active" : undefined}>Overview</Link>
               <Link
                 to="/checks"
                 aria-current={section === "checks" ? "page" : undefined}
@@ -151,6 +153,7 @@ export function App() {
           <Loading />
         ) : authenticated ? (
           <>
+            <InstallationContext />
             {error && !reauthenticate && <Notice>{error}</Notice>}
             <Outlet />
           </>

@@ -111,19 +111,26 @@ export function Loading() {
     </p>
   );
 }
-export function Time({ at }: { at: number | null | undefined }) {
+export function Time({
+  at,
+  compact = false,
+}: {
+  at: number | null | undefined;
+  compact?: boolean;
+}) {
   if (at == null) return <>Not recorded</>;
   const date = new Date(at);
   if (!Number.isFinite(date.getTime())) return <>Invalid timestamp</>;
   const exact = `${date.toISOString()} (UTC)`;
   const readable = new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
+    ...(compact
+      ? { timeZone: "UTC" }
+      : { year: "numeric" as const, timeZoneName: "short" as const }),
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    timeZoneName: "short",
   }).format(date);
   return (
     <time

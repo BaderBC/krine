@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, RouterProvider } from "react-router-dom";
 import { App } from "./App";
+import { Overview } from "./Overview";
 import { Activity, DecisionPage, EntityPage, EventPage } from "./Activity";
 import { CheckPage, Checks } from "./Checks";
 import { MetricPage, Metrics } from "./Metrics";
@@ -11,7 +12,7 @@ const router = createBrowserRouter([
   {
     element: <App />,
     children: [
-      { path: "/", element: <Checks /> },
+      { path: "/", element: <Overview /> },
       { path: "/checks", element: <Checks /> },
       { path: "/checks/:name", element: <CheckPage /> },
       { path: "/inspect/check", element: <CheckPage /> },
