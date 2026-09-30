@@ -6,7 +6,7 @@ Krine runs as one Axum application serving both the API and dashboard, with Post
 
 Run `./scripts/up.sh --local` from the repository root. The helper builds the production image, generates missing secrets, stops the previous application before any migration, and starts the complete stack. The local preset in `deploy/local.env.example` serves `http://127.0.0.1:8080`, permits the browser application origin `http://localhost:3000`, and explicitly enables HTTP development cookies. Shell variables can override its port, origins and secret directory.
 
-Sign in with `deploy/secrets/admin_password`. The independent `browser_public_key` is public browser configuration; `server_secret` belongs only on application backends. Never include the latter or the operator password in a browser bundle.
+On first use, enroll a named Admin with `deploy/secrets/admin_password`, save its generated credential, then sign in by name. After enrollment, use the individual credential; restarting does not reopen enrollment. The independent `browser_public_key` is public browser configuration; `server_secret` belongs only on application backends. Never include the latter or an operator credential in a browser bundle.
 
 Inspect or stop this local stack without removing data:
 
@@ -106,7 +106,7 @@ files or restarting cannot restore revoked credentials. Preserve the credential
 rows and permanent bootstrap marker in backups. When upgrading from
 environment-only authentication, stop every old application process before
 starting the upgraded service; old binaries cannot honor durable revocation.
-The administrator password remains operator-provisioned environment/file input.
+The installation enrollment/recovery secret remains operator-provisioned environment/file input. Daily access uses named operators and their generated credentials; migration 0009 retires shared sessions and requires first named enrollment.
 
 ## Upgrade
 

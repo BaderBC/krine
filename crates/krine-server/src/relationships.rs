@@ -1,3 +1,4 @@
+use crate::operators::{Audit, Capability};
 use crate::{
     App, admin,
     error::{ApiError, Result},
@@ -169,7 +170,7 @@ pub async fn detail(
             rows[limit as usize - 1].get("id"),
         )
     });
-    let audit=rows.iter().take(limit as usize).map(|r|json!({"id":r.get::<String,_>("id"),"at":r.get::<i64,_>("at"),"action":r.get::<String,_>("action"),"reason":r.get::<String,_>("reason"),"actor":r.get::<Option<String>,_>("actor"),"revision":r.get::<Option<i64>,_>("revision"),"relationship":r.get::<Option<Value>,_>("relationship")})).collect::<Vec<_>>();
+    let audit=rows.iter().take(limit as usize).map(|r|json!({"id":r.get::<String,_>("id"),"at":r.get::<i64,_>("at"),"action":r.get::<String,_>("action"),"reason":r.get::<String,_>("reason"),"actor":r.get::<Option<String>,_>("actor"),"actor_identity":r.get::<Option<Value>,_>("actor_identity"),"revision":r.get::<Option<i64>,_>("revision"),"relationship":r.get::<Option<Value>,_>("relationship")})).collect::<Vec<_>>();
     tx.commit().await?;
     Ok(Json(
         json!({"relationship":detail_json(&row),"audit":{"items":audit,"next_cursor":next},"recalculation":"complete"}),
@@ -224,11 +225,12 @@ async fn change(
     util::identifier(&id)?;
     input.validate()?;
     let action = if restore { "restore" } else { "correct" };
-    let (mut tx, key, digest, replay) = admin::mutation(
+    let (mut tx, receipt, replay) = admin::mutation(
         &app,
         &headers,
         &format!("relationships/{kind}/{id}/{action}"),
         &json!(input),
+        Capability::Edit,
     )
     .await?;
     if let Some(value) = replay {
@@ -264,7 +266,7 @@ async fn change(
         ""
     };
     sqlx::query(&format!("UPDATE {table} SET revision=revision+1,revoked_at=$2,revocation_reason=$3,revoked_by=$4{preserve} WHERE id=$1"))
-        .bind(&id).bind((!restore).then_some(at)).bind((!restore).then_some(&input.reason)).bind((!restore).then_some("administrator")).execute(&mut *tx).await?;
+        .bind(&id).bind((!restore).then_some(at)).bind((!restore).then_some(&input.reason)).bind((!restore).then_some(&receipt.actor.actor_id)).execute(&mut *tx).await?;
     let row = sqlx::query("SELECT * FROM relationship_records WHERE kind=$1 AND id=$2")
         .bind(&kind)
         .bind(&id)
@@ -272,13 +274,13 @@ async fn change(
         .await?;
     let relationship = detail_json(&row);
     let audit_id = util::token("rac_");
-    sqlx::query("INSERT INTO relationship_audit(id,kind,relationship_id,at,action,reason,actor,revision,relationship) VALUES($1,$2,$3,$4,$5,$6,'administrator',$7,$8)")
-        .bind(&audit_id).bind(&kind).bind(&id).bind(at).bind(action).bind(input.reason).bind(row.get::<i64,_>("revision")).bind(&relationship).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO relationship_audit(id,kind,relationship_id,at,action,reason,actor,revision,relationship,actor_identity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+        .bind(&audit_id).bind(&kind).bind(&id).bind(at).bind(action).bind(&input.reason).bind(&receipt.actor.actor_id).bind(row.get::<i64,_>("revision")).bind(&relationship).bind(receipt.actor.identity()).execute(&mut *tx).await?;
     admin::finish(
         tx,
-        key,
-        digest,
+        receipt,
         json!({"relationship":relationship,"audit_id":audit_id,"recalculation":"complete"}),
+        Audit::new(if restore {"relationship.restore"}else{"relationship.correct"},"relationship",id).reason(&input.reason).changes(json!({"kind":kind,"previous_revision":input.revision,"revision":row.get::<i64,_>("revision")})),
     )
     .await
 }

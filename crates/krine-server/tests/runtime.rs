@@ -20,6 +20,74 @@ struct Runtime {
     shutdown: tokio::sync::watch::Sender<bool>,
     cookie: String,
     csrf: String,
+    actor_id: String,
+}
+async fn runtime_operator(http: &Client, url: &str, config: &Config) -> Value {
+    use std::{
+        io::Write,
+        os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+    };
+    let methods: Value = http
+        .get(format!("{url}/v1/admin/auth/methods"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let installation = methods["installation_id"].as_str().unwrap();
+    assert!(
+        installation.starts_with("installation_")
+            && installation
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    );
+    let directory = std::path::PathBuf::from(
+        std::env::var_os("KRINE_TEST_OPERATOR_DIRECTORY")
+            .expect("Use the guarded isolated-stores helper"),
+    );
+    match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => panic!("Cannot create private fixture credential directory: {e}"),
+    };
+    let meta = std::fs::symlink_metadata(&directory).unwrap();
+    assert!(meta.is_dir() && meta.mode() & 0o077 == 0);
+    let path = directory.join(format!("verification_operator_{installation}.json"));
+    if path.exists() {
+        let info = std::fs::symlink_metadata(&path).unwrap();
+        assert!(
+            info.is_file()
+                && info.mode() & 0o077 == 0
+                && info.nlink() == 1
+                && info.uid() == meta.uid()
+                && info.len() < 8192
+        );
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap())
+            .expect("Restore the saved named fixture credential or use controlled recovery");
+        assert_eq!(saved["installation_id"], installation);
+        return saved;
+    }
+    assert_eq!(
+        methods["bootstrap"], true,
+        "Fixture enrollment is consumed; do not retry bootstrap or overwrite authority"
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    let response=http.post(format!("{url}/v1/admin/auth/bootstrap")).header("origin",&config.admin_origin)
+        .json(&json!({"installation_secret":config.admin_password,"sign_in_name":"runtime_verification","name":"Runtime verification"})).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let revealed: Value = response.json().await.unwrap();
+    let saved = json!({"schema_version":1,"installation_id":installation,"operator_id":revealed["operator"]["id"],"sign_in_name":"runtime_verification","credential":revealed["credential"]});
+    file.write_all(&serde_json::to_vec(&saved).unwrap())
+        .unwrap();
+    file.sync_all().unwrap();
+    std::fs::File::open(directory).unwrap().sync_all().unwrap();
+    saved
 }
 impl Runtime {
     async fn start() -> Self {
@@ -51,10 +119,12 @@ impl Runtime {
             .timeout(Duration::from_secs(12))
             .build()
             .unwrap();
+        let enrollment = runtime_operator(&http, &url, &app.config).await;
+        let actor_id = enrollment["operator_id"].as_str().unwrap().to_owned();
         let response = http
             .post(format!("{url}/v1/admin/session"))
             .header("origin", &app.config.admin_origin)
-            .json(&json!({"password":app.config.admin_password}))
+            .json(&json!({"sign_in_name":enrollment["sign_in_name"],"credential":enrollment["credential"]}))
             .send()
             .await
             .unwrap();
@@ -79,6 +149,7 @@ impl Runtime {
             shutdown,
             cookie,
             csrf,
+            actor_id,
         }
     }
     fn server(&self, path: &str) -> RequestBuilder {
@@ -98,6 +169,7 @@ impl Runtime {
             .header("origin", &self.app.config.admin_origin)
             .header("cookie", &self.cookie)
             .header("x-csrf-token", &self.csrf)
+            .header("x-krine-operator-id", &self.actor_id)
             .header("idempotency-key", key)
     }
     async fn context(&self) -> Value {
@@ -685,7 +757,7 @@ async fn hostile_boundaries_and_policy_editing() {
             .header("x-csrf-token", "invalid")
             .json(&json!({"name":unique()})),
         StatusCode::FORBIDDEN,
-        "forbidden",
+        "csrf_failed",
     )
     .await;
     let check = unique();

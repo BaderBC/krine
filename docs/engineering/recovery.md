@@ -13,7 +13,15 @@ accordingly, and rehearse restoration. A backup's timestamp is not a promise of
 zero data loss. Before reopening protected traffic after restoring an older
 backup, reconcile the application's durable business records against Krine's
 restored operation records. Never erase proof ownership, revive a revoked key, or
-retry a business action with a new operation ID to make recovery succeed.
+retry a business action with a new operation ID to make recovery succeed. Operator
+identities, roles, credential digests, disable state and audit are also durable.
+Before opening ingress, invalidate every restored operator session and recovery
+grant, then reconcile operator disable/role/credential changes since the backup.
+An older backup must not restore access for an offboarded person. Reconcile
+application credentials separately; browser sessions do not replace that review.
+Use the named credential preserved with the backup only after this review, or
+explicitly arm host recovery with the restored installation's private settings.
+
 
 ## Capture a stopped boundary
 
@@ -212,7 +220,32 @@ docker exec -i "$target_pg" sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_passw
    owner; installations with additional roles or custom grants must restore those
    separately under operator review. Keep all credential tables, permanent
    bootstrap markers, migration checksums, operation/proof ownership and
-   relationship audit records intact.
+   relationship audit records intact. On the matching operator-access schema,
+   invalidate restored sessions and grants before starting the application:
+
+```bash
+docker exec -i "$target_pg" sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" \
+  exec psql -h 127.0.0.1 -U krine -d krine -v ON_ERROR_STOP=1' <<'SQL'
+SET krine.writer_generation='6';
+BEGIN;
+SELECT singleton FROM operator_access WHERE singleton FOR UPDATE;
+UPDATE operator_sessions SET revoked_at=COALESCE(revoked_at,
+  (extract(epoch FROM clock_timestamp())*1000)::bigint);
+UPDATE operator_recovery_grants SET revoked_at=COALESCE(revoked_at,
+  (extract(epoch FROM clock_timestamp())*1000)::bigint);
+INSERT INTO administrative_audit(id,at,actor_id,actor_type,actor_name,action,
+  resource_type,resource_id,reason,changes)
+VALUES('aud_'||replace(gen_random_uuid()::text,'-',''),
+  (extract(epoch FROM clock_timestamp())*1000)::bigint,
+  'installation_configuration','installation_configuration','Installation configuration',
+  'recovery.restore','installation','operator_access','Restored a reviewed backup','{}');
+COMMIT;
+SQL
+```
+
+   Reconcile named operator and application credential changes since this backup
+   while ingress remains closed. Do not bypass the fence if the schema differs:
+   use its matching recovery procedure and reviewed upgrade sequence.
 5. Start **new empty Valkey**, restored ClickHouse and then the matching Krine
    application. Never restore Valkey's old AOF/RDB into this target. Krine creates
    a new projection generation and rebuilds current counters from retained

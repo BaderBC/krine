@@ -24,14 +24,32 @@ impl Retention {
     }
 }
 
-pub(crate) async fn configure(
-    db: &sqlx::PgPool,
-    days: i64,
-) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn configure(db: &sqlx::PgPool, days: i64) -> Result<()> {
+    let mut tx = db.begin().await?;
+    crate::operators::gate(&mut tx, true).await?;
+    let previous: i32 =
+        sqlx::query_scalar("SELECT requested_days FROM analytical_retention WHERE singleton")
+            .fetch_one(&mut *tx)
+            .await?;
     // Capture the old rolling boundary even when nobody read history for months.
     // An extension waits for the one-time removal of legacy rolling TTLs.
     sqlx::query("UPDATE analytical_retention SET expired_before=GREATEST(expired_before,(extract(epoch FROM clock_timestamp())*1000)::bigint-LEAST(days,$1)*86400000::bigint), requested_days=$1, days=CASE WHEN NOT EXISTS(SELECT 1 FROM analytical_cleanup WHERE NOT retired) THEN $1 ELSE LEAST(days,$1) END WHERE singleton")
-        .bind(days).execute(db).await?;
+        .bind(days).execute(&mut *tx).await?;
+    if i64::from(previous) != days {
+        crate::operators::record(
+            &mut tx,
+            &crate::operators::host_actor(),
+            crate::operators::Audit::new(
+                "retention.configure",
+                "installation",
+                "analytical_retention",
+            )
+            .changes(json!({"previous_days":previous,"days":days})),
+            None,
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 

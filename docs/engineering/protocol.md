@@ -4,7 +4,7 @@ This is the shared contract for the backend, SDKs and dashboard. [ADR 0009](../d
 
 ## Access and errors
 
-One self-hosted installation serves one project in MVP. Browser endpoints require `X-Krine-Public-Key`, an exact configured `Origin`, and an allowed source IP; the public key identifies the project and grants no backend authority. Server endpoints require `Authorization: Bearer <server_secret>`. Admin endpoints require a separate admin session cookie. Secrets are never accepted in URLs. Admin login uses an operator-provisioned password, rate limits failures, and sets an HttpOnly, Secure, SameSite=Strict cookie. State-changing admin requests require an exact same-origin `Origin` and a session-bound `X-CSRF-Token` returned by login/session. Local HTTP is an explicit development setting.
+One self-hosted installation serves one project in MVP. Browser endpoints require `X-Krine-Public-Key`, an exact configured `Origin`, and an allowed source IP; the public key identifies the project and grants no backend authority. Server endpoints require `Authorization: Bearer <server_secret>`. Admin endpoints require an individual operator session cookie. Secrets are never accepted in URLs. Local sign-in uses a named operator and server-generated credential, rate limits failures, and sets an HttpOnly, Secure, SameSite=Strict cookie. State-changing admin requests require an exact same-origin `Origin`, a session-bound `X-CSRF-Token` and the original intent's `X-Krine-Operator-ID`. Local HTTP is an explicit development setting.
 
 Krine uses its TCP peer IP unless that peer belongs to an operator-configured trusted-proxy CIDR. It then processes the configured forwarding header from the trusted end of the chain. Never trust arbitrary client forwarding headers. Browser proof IP is compared with the authoritative application's submitted `ip`; application integration must likewise derive that IP from its trusted proxy configuration. Normalize IPv4-mapped IPv6 before comparison.
 
@@ -98,9 +98,9 @@ The Rust `krine-core` serde types are the canonical policy/catalog/trace schema.
 
 ## Dashboard API
 
-Admin prefix is `/v1/admin`. Login `POST /session { password }` and current `GET /session` return `{ csrf_token, expires_at }`; `DELETE /session` logs out. Other endpoints require the session and mutation CSRF protections above. The deployment provisions the admin password; Settings manages browser and server credentials with create/revoke controls. Server credentials never authorize admin operations.
+Admin prefix is `/v1/admin`. Individual operator access is defined below. Server credentials never authorize administrative operations.
 
-Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, max 100. Opaque cursors use stable descending `(created_at,id)` order. Check-list `q` search accepts at most 128 bytes; Activity scalar filters accept at most 256 bytes. Every mutation except login requires `Idempotency-Key`, immutable payload validation and 24-hour replay; versioned edits additionally compare `revision` atomically. Sensitive provider writes replay only the redacted response.
+Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, max 100. Opaque cursors use stable descending `(created_at,id)` order. Check-list `q` search accepts at most 128 bytes; Activity scalar filters accept at most 256 bytes. Every authenticated mutation requires `Idempotency-Key` and the original actor header. Durable effects have actor-scoped immutable payload validation and 24-hour replay; versioned edits additionally compare `revision` atomically. Sign-out revokes its own session and a subsequent retry is unauthenticated. Bootstrap and recovery redemption are deliberately single-use operations. Sensitive provider writes replay only the redacted response.
 
 | Method and path | Input / response |
 | --- | --- |
@@ -131,7 +131,7 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 
 `has_draft_changes` compares the saved draft policy with the active immutable policy by JSON value, independently of draft revision numbers or description edits. It is `true` while unpublished; `active_version: null` identifies that state. Saving the active policy again or undoing an edit returns it to `false`; publication also makes it `false`.
 
-`ProviderSummary` is `{ capability, provider, enabled, revision, config, has_secret, status, message, checked_at, dependent_checks: string[], dependent_versions: { check: string, version: number }[], dependents_token: string }`; capabilities are `ip_intelligence` and `verification`. `config` contains public configuration only; secret writes use explicit `secret` within write config, omission retains the previous secret and `null` clears it. `status` is `unconfigured`, `disabled`, `ready` or `configuration_checked`; it describes the saved configuration test, not a live availability guarantee. Turnstile format checking returns `configuration_checked` with a message that live site-key/secret pairing is untested; real application verification remains strict. Proxycheck tests perform a one-second lookup of `1.1.1.1`: complete evidence reports `ready`; warnings or incomplete evidence with at least one usable normalized field report `configuration_checked`, with missing/invalid fields still unknown and an explicit reminder that other IPs may differ. No usable evidence, malformed responses and credential rejection cannot activate a candidate. Old revisions needed by pending attempts are retained. Candidate tests never change active configuration, and failed tests cannot be saved as enabled. Write config for proxycheck is `{ secret?: string|null }`; its key is optional for the public service tier. Turnstile uses `{ site_key?: string, secret?: string|null }`, with a valid site key and nonempty secret required when enabled. Omitted public fields retain the existing value. Disabled candidates need no test token. Replacing or disconnecting an existing provider revision with published dependents requires `acknowledge_dependents: true` and `reviewed_dependents_token` matching the exact sorted dependent check/version set returned by GET or test. Read the immutable policies listed in `dependent_versions` for review. Acknowledged replacement/disconnection rejects missing or stale tokens with `409 dependent_checks_changed`, including republished, added or removed dependents; refresh and review before sending a new mutation key. Candidate activation tokens remain valid for their original ten minutes after a stale review. Publication locks the union of previous and next dependencies, so changes cannot race this check. No lock spans operator review. Initial providers: `proxycheck` for IP intelligence and `turnstile` for verification; their adapters normalize evidence. Policies never mention either name. `CredentialSummary` is `{ id, kind: "browser"|"server", label, source: "bootstrap"|"administrator", public_key: string|null, created_at, revoked_at: number|null, revoked_by: "administrator"|null }`. Labels contain 1–128 bytes without control characters or surrounding whitespace. All browser credentials use the deployment’s exact origin allowlist. Server values contain 256 random bits and are stored only as SHA-256 digests. Secret-once creation is an intentional exception to response replay; on a lost first response revoke the inaccessible credential and create a replacement. Browser creations use `secret_status: "not_applicable"`; their public value remains in metadata. Create replays return current revocation state. Authentication checks PostgreSQL on every request; after revocation commits later authentication fails, while an already-authenticated request may finish. Existing participation/proof tokens are not revoked by key rotation. Setup returns no key if none is active. See [ADR 0012](../decisions/0012-durable-application-credentials.md) for permanent bootstrap import and upgrade requirements.
+`ProviderSummary` is `{ capability, provider, enabled, revision, config, has_secret, status, message, checked_at, dependent_checks: string[], dependent_versions: { check: string, version: number }[], dependents_token: string, created_by: OperatorIdentity|null }`; capabilities are `ip_intelligence` and `verification`. `config` contains public configuration only; secret writes use explicit `secret` within write config, omission retains the previous secret and `null` clears it. `status` is `unconfigured`, `disabled`, `ready` or `configuration_checked`; it describes the saved configuration test, not a live availability guarantee. Turnstile format checking returns `configuration_checked` with a message that live site-key/secret pairing is untested; real application verification remains strict. Proxycheck tests perform a one-second lookup of `1.1.1.1`: complete evidence reports `ready`; warnings or incomplete evidence with at least one usable normalized field report `configuration_checked`, with missing/invalid fields still unknown and an explicit reminder that other IPs may differ. No usable evidence, malformed responses and credential rejection cannot activate a candidate. Old revisions needed by pending attempts are retained. Candidate tests never change active configuration, and failed tests cannot be saved as enabled. Write config for proxycheck is `{ secret?: string|null }`; its key is optional for the public service tier. Turnstile uses `{ site_key?: string, secret?: string|null }`, with a valid site key and nonempty secret required when enabled. Omitted public fields retain the existing value. Disabled candidates need no test token. Replacing or disconnecting an existing provider revision with published dependents requires `acknowledge_dependents: true` and `reviewed_dependents_token` matching the exact sorted dependent check/version set returned by GET or test. Read the immutable policies listed in `dependent_versions` for review. Acknowledged replacement/disconnection rejects missing or stale tokens with `409 dependent_checks_changed`, including republished, added or removed dependents; refresh and review before sending a new mutation key. Candidate activation tokens remain valid for their original ten minutes after a stale review. Publication locks the union of previous and next dependencies, so changes cannot race this check. No lock spans operator review. Initial providers: `proxycheck` for IP intelligence and `turnstile` for verification; their adapters normalize evidence. Policies never mention either name. `CredentialSummary` is `{ id, kind: "browser"|"server", label, source: "bootstrap"|"administrator", public_key: string|null, created_at, revoked_at: number|null, revoked_by: string|null, created_by: OperatorIdentity|null, revocation_actor: OperatorIdentity|null }`. `OperatorIdentity` is `{ id: string, type: "operator"|"installation_recovery"|"installation_configuration", name: string }`. New `revoked_by` values are stable operator IDs; historical values may retain `"administrator"`, with null identity snapshots. Labels contain 1–128 bytes without control characters or surrounding whitespace. All browser credentials use the deployment’s exact origin allowlist. Server values contain 256 random bits and are stored only as SHA-256 digests. Secret-once creation is an intentional exception to response replay; on a lost first response revoke the inaccessible credential and create a replacement. Browser creations use `secret_status: "not_applicable"`; their public value remains in metadata. Create replays return current revocation state. Authentication checks PostgreSQL on every request; after revocation commits later authentication fails, while an already-authenticated request may finish. Existing participation/proof tokens are not revoked by key rotation. Setup returns no key if none is active. See [ADR 0012](../decisions/0012-durable-application-credentials.md) for permanent bootstrap import and upgrade requirements.
 
 Activity scalar filters accept at most 256 bytes. `entity` search matches the exact identifier across client, session, user and IP fields. Optional `entity_kind` (`client`, `session`, `user`, `ip`) requires `entity` and restricts matching to that field. Links from a known entity must include its kind. Entity-detail recent history is likewise typed. Newly issued Activity cursors bind all filters, including entity kind; changing filters requires a fresh page. Legacy cursors remain accepted only for untyped requests. The additive `reason` and `provenance` filters bind cursors as well; cursors issued without these filters remain compatible. Both lists add `retention: { days, requested_days, applying, available_since }`, with the effective retention boundary in milliseconds; this does not promise uninterrupted historical coverage. Analytical visibility is asynchronous.
 
@@ -432,3 +432,131 @@ payloads. Their existing `provenance` remains `backend` or `browser`: origin and
 trust provenance are separate concepts. Marker absence does not identify a
 real person or assert trustworthy evidence. The [demo workflow](demo.md) explains
 its isolated import, retained history and live-connection boundaries.
+
+## Individual operator access
+
+[ADR 0021](../decisions/0021-individual-operator-access.md) defines the authority,
+ordering, attribution and upgrade contract. All paths here use `/v1/admin`.
+Local sign-in is implemented; OIDC availability is `false` in this unit.
+
+An operator is `{ id, name, sign_in_name, role: viewer|editor|admin,
+state: active|disabled, revision, authentication_method: "local", created_at,
+last_sign_in_at: number|null }`. IDs are immutable and distinct from customer
+user IDs. Names contain 1–128 UTF-8 bytes with no surrounding whitespace or
+control characters. Sign-in names contain 1–64 ASCII letters/digits/`_.-`, are
+case-sensitive and immutable. Reasons contain 1–512 bytes with the same text
+restrictions. Disabled records are retained.
+
+Public routes:
+
+| Route | Input | Response |
+| --- | --- | --- |
+| `GET /auth/methods` | none | `{ installation_id, local, bootstrap, recovery: true, oidc: false }`; availability flags, not dependency-health assertions |
+| `POST /auth/bootstrap` | `{ installation_secret, sign_in_name, name }` | One first Admin: `{ operator, credential, secret_status: "revealed" }`; creates no session |
+| `POST /session` | `{ sign_in_name, credential }` | Session below and cookie |
+| `POST /auth/recovery/session` | `{ token }` | Restricted session below and cookie |
+
+Public POSTs still require the exact admin `Origin` and source-IP rate limit.
+Local sign-in additionally uses bounded account-key rate limiting. Failed sign-in
+is generic `401 unauthenticated`. Bootstrap consumes its durable marker before
+returning a generated credential; repeat bootstrap returns `409 bootstrap_consumed`.
+Changing the installation secret cannot reopen enrollment. Save the initial
+credential before signing in; a lost reveal requires host recovery. Recovery
+redemption is single-use; a lost response requires arming a new host grant.
+
+`POST /session` and `GET /session` return:
+
+```json
+{
+  "operator": { "id": "op_…", "name": "Alex", "sign_in_name": "alex", "role": "editor", "state": "active", "revision": 1, "authentication_method": "local", "created_at": 1790000000000, "last_sign_in_at": 1790000000000 },
+  "actor_id": "op_…",
+  "session_id": "os_…",
+  "authentication_method": "local",
+  "capabilities": ["session", "investigate", "edit"],
+  "csrf_token": "opaque",
+  "expires_at": 1790028800000,
+  "recovery_reason": null
+}
+```
+
+Recovery returns `operator: null`, a distinct `actor_id: "recovery:<grant-id>"`,
+`authentication_method: "installation_recovery"`, `capabilities:
+["session","manage_operators"]`, the host-supplied reason and its 30-minute expiry.
+Ordinary local sessions last eight hours without renewal. `DELETE /session`
+revokes only the current session, records sign-out and clears the cookie, returning
+204. Cookie name is `krine_operator`; duplicate copies or duplicate Cookie headers
+are rejected. Secure is omitted only in explicit development mode.
+
+Capabilities are server-enforced on every route and transaction:
+
+| Capability | Authority and routes |
+| --- | --- |
+| `session` | Any session: current/sign-out; own session list/revocation. Admin/recovery may manage another operator's sessions. |
+| `investigate` | Viewer/Editor/Admin: checks and versions, metrics, entity context/history, relationships and their audit, Activity, analytics, setup, installation and redacted provider summaries. All existing path/query aliases and HEAD use the same authority. |
+| `edit` | Editor/Admin: check creation/drafts/publication/restoration and relationship correction/restoration, including aliases. |
+| `administer` | Admin: credential list/create/revoke and provider save/test. |
+| `manage_operators` | Admin or recovery: operator list/detail/create/update/credential rotation and other operators' session management. |
+| `audit` | Admin: administrative audit. Recovery does not receive this customer/resource investigation surface. |
+
+Operator lifecycle routes:
+
+| Route | Input | Response |
+| --- | --- | --- |
+| `GET /operators`, `GET /operators/{id}` | List `limit,cursor`; detail no query | Operator page or operator |
+| `POST /operators` | `{ name, sign_in_name, role, reason }` | `{ operator, credential, secret_status: "revealed" }` |
+| `PUT /operators/{id}` | `{ revision, name, role, state, reason }` | Updated operator; revision advances |
+| `POST /operators/{id}/credential-rotations` | `{ revision, reason }` | `{ operator, credential, secret_status: "revealed" }`; target revision advances |
+| `GET /operators/{id}/sessions` | `limit,cursor` | Page of `{ id, created_at, expires_at, revoked_at: number|null, current }` |
+| `POST /operators/{id}/sessions/{session_id}/revocations` | `{ revision, reason }` | `{ operator_id, session_id, revoked: 1 }` |
+| `POST /operators/{id}/session-revocations` | `{ revision, reason }` | `{ operator_id, session_id: null, revoked }`; count of newly revoked unexpired sessions |
+
+`revision` in session revocation refers to the operator. Credential rotation,
+role changes and state changes revoke target sessions atomically. Name-only edits
+do not revoke sessions. Reactivation restores no session. Sign-in name is not
+editable. The last active ordinary Admin cannot be disabled/demoted; conflicting
+requests return `409 last_admin`. Duplicate sign-in name returns
+`409 sign_in_name_taken`; stale revision returns `409 revision_conflict`.
+
+Generated local credentials contain 32 random bytes and an `ok_` prefix. Creation
+and rotation reveal them once. Exact retries return current operator metadata,
+`credential: null, secret_status: "unrecoverable"`. A lost reveal needs a deliberate
+new rotation with its new revision and intent. Self-rotation revokes the caller;
+if its reveal is lost, another Admin or host recovery must restore access.
+
+Every authenticated mutation requires one `X-Krine-Operator-ID` equal to the
+session's `actor_id`, plus Origin, CSRF and Idempotency-Key. Missing/mismatched
+original actor returns `409 actor_changed`. A repeated key with different logical
+target/input returns `409 input_conflict`, independently in each actor namespace.
+The server rechecks current authority before replay. `401 unauthenticated` means
+expired/revoked/missing authentication; `403 insufficient_privilege` means valid
+current authentication lacks permission; `403 csrf_failed` means request
+verification failed. None establishes that an earlier ambiguous effect failed.
+
+`GET /audit` accepts `limit,cursor` plus optional exact `actor_id,resource_type,
+resource_id` (each 1–256 bytes). It returns `{ items, next_cursor, coverage: {
+days: 365, started_at, available_since } }`. Each item is `{ id, at,
+actor: { id, type, name }, action, resource: { type, id }, reason: string|null,
+changes: object }`. `changes` contains allowlisted revision/role/state/configuration
+summaries, never request bodies or secrets. Cursors bind their filters and list.
+Operator/session/audit lists default to 50, maximum 100; unknown and duplicate
+parameters are rejected. Lists use descending `(created_at,id)` or audit `(at,id)`;
+concurrent inserts and retention changes do not create a fixed snapshot.
+
+Policy versions expose nullable `published_by`; credential details expose
+nullable `created_by` and `revocation_actor`; provider revisions expose nullable
+`created_by`; relationship audit exposes nullable `actor_identity`. These actor
+objects use `{ id,type,name }`. Legacy null/shared labels remain unattributed.
+The existing `revoked_by` and relationship `actor` strings now contain the stable
+operator actor ID for new effects, rather than the shared `administrator` label.
+Once an application credential is revoked, later revocation requests preserve
+its original timestamp and attribution, including null historical identities.
+A different mutation key records `credential.revocation_confirmed`; only the
+first revocation records `credential.revoke`. An exact replay adds no audit row.
+
+Dashboard clients bind persisted drafts/intents to installation ID and actor ID,
+clear secret candidate state and unmount prior actor views when actors change.
+Reauthentication may recover the same actor's intent, but never auto-resubmits it.
+Old unbound persisted intents need an explicit recovery notice. A 403 capability
+error keeps investigation usable; it must not become repeated sign-in. Recovery
+must show its restricted authority, reason and expiry. One-time credentials should
+support password-manager copying without logging or persistent browser storage.

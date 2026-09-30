@@ -32,7 +32,7 @@ TABLES = {
     "observed_ips": ("id", "client_id session_id ip first_seen last_seen credential_id last_credential_id first_source last_source first_event_id last_event_id has_corrections revision revoked_at revocation_reason revoked_by"),
     "relationship_audit": ("id", "kind relationship_id at action reason actor revision relationship"),
 }
-EMPTY_TABLES = tuple(TABLES) + ("events", "operations", "delivery_outbox", "admin_sessions", "admin_mutations",
+EMPTY_TABLES = tuple(TABLES) + ("events", "operations", "delivery_outbox", "operator_sessions", "operators", "operator_recovery_grants", "admin_mutations",
     "provider_revisions", "provider_tests", "challenge_steps", "verification_transitions", "application_observations")
 MAX_CHUNK = 2 * 1024 * 1024
 CH_SETTINGS = " SETTINGS max_execution_time=20,max_memory_usage=268435456,max_result_bytes=8388608,result_overflow_mode='throw'"
@@ -269,7 +269,7 @@ class Deployment:
     def sql(self, query):
         return docker("exec", "-i", self.state["containers"]["postgres"], "sh", "-c",
             'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql -X -h 127.0.0.1 -U krine -d krine -Atq -v ON_ERROR_STOP=1',
-            data=("SET standard_conforming_strings=on; SET krine.writer_generation='5'; SET statement_timeout='30s'; SET lock_timeout='3s';\n" + query).encode()).decode().strip()
+            data=("SET standard_conforming_strings=on; SET krine.writer_generation='6'; SET statement_timeout='30s'; SET lock_timeout='3s';\n" + query).encode()).decode().strip()
 
     def ch(self, query, body=b""):
         return docker("exec", "-i", self.state["containers"]["clickhouse"], "sh", "-c",
@@ -297,6 +297,8 @@ class Deployment:
             return actual["completed_at"] is not None
         for table in EMPTY_TABLES:
             require(self.sql(f"SELECT count(*) FROM {table};") == "0", "Refuse nonempty application data: " + table)
+        require(self.sql("SELECT count(*) FROM operator_access WHERE bootstrap_consumed_at IS NOT NULL OR NOT local_enabled;") == "0", "Operator enrollment or sign-in configuration has changed")
+        require(self.sql("SELECT count(*) FROM administrative_audit WHERE actor_id<>'installation_configuration' OR actor_type<>'installation_configuration' OR action NOT IN ('access.configuration','retention.configure');") == "0", "Administrative activity exists before import")
         require(self.sql("SELECT count(*) FROM demo_import_chunks;") == "0", "Import ledger exists without ownership")
         require(self.sql("SELECT count(*) FROM application_credentials WHERE source<>'bootstrap';") == "0", "Non-bootstrap credentials exist")
         require(self.ch("SELECT count() FROM history_v2" + CH_SETTINGS) == "0" and self.ch("SELECT count() FROM history" + CH_SETTINGS) == "0", "Refuse existing historical records")
@@ -552,7 +554,7 @@ def resume(directory):
             state["phase"] = "complete"
             deployment.save()
         require(state["phase"] == "complete", "Unknown import phase")
-        print(f"Synthetic demo ready: http://localhost:{state['port']}\nPassword file: {directory / 'secrets/admin_password'}\nScenario ledger: {dataset / 'manifest.json'}\nVolumes are preserved; this workflow never deletes data.")
+        print(f"Synthetic demo ready: http://localhost:{state['port']}\nFirst operator enrollment secret: {directory / 'secrets/admin_password'}\nScenario ledger: {dataset / 'manifest.json'}\nVolumes are preserved; this workflow never deletes data.")
         for scenario in manifest["scenarios"]:
             print(scenario["name"] + ": http://localhost:" + str(state["port"]) + scenario["examples"][-1]["decision_path"])
 

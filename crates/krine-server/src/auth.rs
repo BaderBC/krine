@@ -1,29 +1,19 @@
 use crate::{
     App,
     error::{ApiError, Result},
-    json::StrictJson,
     util,
 };
 use axum::{
-    Json,
     extract::{ConnectInfo, Request, State},
     http::{HeaderMap, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
-use serde_json::json;
-use sqlx::Row;
 use std::net::{IpAddr, SocketAddr};
 
 #[derive(Clone, Copy)]
 pub struct Peer(pub IpAddr);
-#[derive(Clone)]
-pub struct Admin {
-    pub digest: String,
-    pub csrf: String,
-    pub expires_at: i64,
-}
+pub use crate::operators::{current, login, logout};
 pub fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     {
         let mut values = headers.get_all(name).iter();
@@ -126,17 +116,38 @@ pub async fn boundary(State(app): State<App>, mut request: Request, next: Next) 
                 if mutation && origin.as_deref() != Some(&app.config.admin_origin) {
                     return Err(ApiError::forbidden());
                 }
-                if path == "/v1/admin/session" && request.method() == Method::POST {
-                    rate(&app, &format!("login:{peer}"), app.config.login_rate, 60).await?;
-                } else {
-                    let session = session(&app, request.headers()).await?;
-                    crate::query::validate_encoding(request.uri().query())?;
+                if crate::operators::public_route(&path, request.method()) {
                     if mutation {
-                        if !header(request.headers(), "x-csrf-token")
-                            .is_some_and(|v| util::equal(v, &session.csrf))
-                        {
-                            return Err(ApiError::forbidden());
-                        }
+                        rate(&app, &format!("login:{peer}"), app.config.login_rate, 60).await?;
+                    }
+                } else {
+                    let session = crate::operators::session(&app, request.headers()).await?;
+                    crate::query::validate_encoding(request.uri().query())?;
+                    let template = request
+                        .extensions()
+                        .get::<axum::extract::MatchedPath>()
+                        .map(|p| p.as_str())
+                        .unwrap_or("");
+                    let capability = crate::operators::route_capability(template, request.method())
+                        .ok_or_else(|| {
+                            if [Method::GET, Method::POST, Method::PUT, Method::DELETE]
+                                .iter()
+                                .any(|method| {
+                                    crate::operators::route_capability(template, method).is_some()
+                                })
+                            {
+                                ApiError::new(
+                                    StatusCode::METHOD_NOT_ALLOWED,
+                                    "method_not_allowed",
+                                    "This method is not supported for the resource.",
+                                )
+                            } else {
+                                crate::operators::insufficient()
+                            }
+                        })?;
+                    session.require(capability)?;
+                    if mutation {
+                        crate::operators::check_intent(request.headers(), &session)?;
                         let key = header(request.headers(), "idempotency-key")
                             .ok_or_else(|| ApiError::invalid("Idempotency-Key is required."))?;
                         util::identifier(key)?;
@@ -216,84 +227,4 @@ pub async fn rate(app: &App, subject: &str, limit: i64, seconds: i64) -> Result<
         ));
     }
     Ok(())
-}
-async fn session(app: &App, headers: &HeaderMap) -> Result<Admin> {
-    let cookie = header(headers, "cookie")
-        .and_then(|v| {
-            v.split(';')
-                .find_map(|part| part.trim().strip_prefix("krine_admin="))
-        })
-        .filter(|v| v.len() <= 128)
-        .ok_or_else(ApiError::unauthorized)?;
-    let digest = util::digest(cookie);
-    let row = sqlx::query(
-        "SELECT csrf, expires_at FROM admin_sessions WHERE digest=$1 AND expires_at>$2",
-    )
-    .bind(&digest)
-    .bind(util::now())
-    .fetch_optional(&app.db)
-    .await?
-    .ok_or_else(ApiError::unauthorized)?;
-    Ok(Admin {
-        digest,
-        csrf: row.get("csrf"),
-        expires_at: row.get("expires_at"),
-    })
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Login {
-    password: String,
-}
-pub async fn login(
-    State(app): State<App>,
-    StrictJson(input): StrictJson<Login>,
-) -> Result<Response> {
-    if input.password.len() > 1024 || !util::equal(&input.password, &app.config.admin_password) {
-        return Err(ApiError::unauthorized());
-    }
-    let token = util::token("");
-    let csrf = util::token("");
-    let expires_at = util::now() + 28_800_000;
-    sqlx::query("INSERT INTO admin_sessions(digest,csrf,expires_at) VALUES($1,$2,$3)")
-        .bind(util::digest(&token))
-        .bind(&csrf)
-        .bind(expires_at)
-        .execute(&app.db)
-        .await?;
-    let mut response = Json(json!({"csrf_token":csrf,"expires_at":expires_at})).into_response();
-    response.headers_mut().insert(
-        "set-cookie",
-        format!(
-            "krine_admin={token}; HttpOnly; SameSite=Strict; Path=/v1/admin; Max-Age=28800{}",
-            if app.config.development {
-                ""
-            } else {
-                "; Secure"
-            }
-        )
-        .parse()
-        .map_err(|_| ApiError::unavailable())?,
-    );
-    Ok(response)
-}
-pub async fn current(axum::Extension(admin): axum::Extension<Admin>) -> Json<serde_json::Value> {
-    Json(json!({"csrf_token":admin.csrf,"expires_at":admin.expires_at}))
-}
-pub async fn logout(
-    State(app): State<App>,
-    axum::Extension(admin): axum::Extension<Admin>,
-) -> Result<Response> {
-    sqlx::query("DELETE FROM admin_sessions WHERE digest=$1")
-        .bind(admin.digest)
-        .execute(&app.db)
-        .await?;
-    let mut response = StatusCode::NO_CONTENT.into_response();
-    response.headers_mut().insert(
-        "set-cookie",
-        "krine_admin=; HttpOnly; SameSite=Strict; Path=/v1/admin; Max-Age=0"
-            .parse()
-            .expect("header"),
-    );
-    Ok(response)
 }

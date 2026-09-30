@@ -44,8 +44,10 @@ regenerate and verify the bundle. `create` makes an independently named project,
 secrets, volumes and networks, initializes the unpublished application, stops its
 writer, imports bounded chunks and verifies every row before opening the port.
 
-Open `http://localhost:18080`. Sign in with the password from
-`$KRINE_DEMO_ROOT/deployment/secrets/admin_password`. Keep this host spelling:
+Open `http://localhost:18080`. Enroll your first named Admin using
+`$KRINE_DEMO_ROOT/deployment/secrets/admin_password`, save the generated credential,
+then sign in by name. Existing named enrollment survives a completed resume; it is
+never reseeded. Keep this host spelling:
 cookies are not port-scoped, so `localhost` separates this demo from the normal
 `127.0.0.1` development installation. Use a different port if 18080 is occupied.
 Only the application port is published, on loopback.

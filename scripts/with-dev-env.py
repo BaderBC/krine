@@ -86,4 +86,5 @@ if isolated_stores:
     if valkey_url is None:
         valkey_url = Path(os.environ["KRINE_VALKEY_URL_FILE"]).read_text().rstrip("\r\n")
     os.environ.setdefault("KRINE_PROVIDER_TEST_VALKEY_URL", valkey_url)
+    os.environ["KRINE_TEST_OPERATOR_DIRECTORY"] = str(secrets)
 os.execvp(sys.argv[1], sys.argv[1:])

@@ -45,6 +45,7 @@ jobs:
           python3 scripts/check-example-isolation.py
           python3 scripts/check-recovery-isolation.py
           python3 -B -m unittest discover -s scripts/demo -p 'test_*.py'
+          python3 -B -m unittest discover -s scripts/operator_auth_tests -p 'test_*.py'
       - name: Dependency advisories
         run: |
           pnpm audit --prod

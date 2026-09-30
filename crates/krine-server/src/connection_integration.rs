@@ -394,11 +394,18 @@ async fn migration_backfills_only_retained_receipts_and_claims_can_be_pending() 
     event(&f, &event_id).await;
     // Reconstruct a pre-0007 fixture without altering any previously published
     // migration; reapply 0007 to prove the real upgrade backfill contract.
-    sqlx::raw_sql("ALTER FUNCTION require_writer_generation_5() RENAME TO require_writer_generation_4; DROP TABLE application_observations,application_observation_state,analytical_retention,analytical_cleanup; DROP INDEX operations_captured_decision; DELETE FROM _sqlx_migrations WHERE version=7").execute(&f.app.db).await.unwrap();
-    let mut config = Config::load().unwrap();
-    config.database_url = f.app.config.database_url.clone();
-    config.valkey_url = f.app.config.valkey_url.clone();
-    let upgraded = App::connect(config).await.unwrap();
+    sqlx::raw_sql("ALTER FUNCTION require_writer_generation_6() RENAME TO require_writer_generation_4; DROP TABLE application_observations,application_observation_state,analytical_retention,analytical_cleanup; DROP INDEX operations_captured_decision").execute(&f.app.db).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0007_connection_and_retention.sql"
+    ))
+    .execute(&f.app.db)
+    .await
+    .unwrap();
+    let fence = include_str!("../../../migrations/0009_operator_access.sql")
+        .split("DROP TABLE admin_sessions;")
+        .next()
+        .unwrap();
+    sqlx::raw_sql(fence).execute(&f.app.db).await.unwrap();
     let rows = setup(&f, Some(&check)).await;
     assert_eq!(
         rows["observations"]["check_attempt"]["basis"],
@@ -433,7 +440,6 @@ async fn migration_backfills_only_retained_receipts_and_claims_can_be_pending() 
         setup(&f, Some(&check)).await["observations"]["check_attempt"]["record"]["availability"],
         "pending"
     );
-    upgraded.db.close().await;
     f.finish().await;
 }
 
@@ -719,7 +725,7 @@ async fn schema_five_and_six_upgrade_preserve_facts_and_reject_old_writers() {
             assert!(
                 error
                     .to_string()
-                    .contains("generation 5; stop the old server")
+                    .contains("generation 6; stop the old server")
             );
         }
         app.db.close().await;
