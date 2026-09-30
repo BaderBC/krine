@@ -232,31 +232,36 @@ const integer = (v: unknown): v is number =>
   Number.isSafeInteger(v) && Number(v) >= 0;
 const time = (v: unknown): v is number => integer(v) && v <= 8.64e15;
 const nullableTime = (v: unknown) => v === null || time(v);
-export function validAnalytics(value: unknown): value is ActivityAnalytics {
+export type HistoryCoverage = Pick<
+  ActivityAnalytics,
+  "as_of" | "retention" | "visibility" | "delivery"
+> & {
+  range: Omit<ActivityAnalytics["range"], "bucket_ms">;
+};
+
+/** Shared coverage semantics for aggregates and individual history pages. */
+export function validHistoryCoverage(
+  value: unknown,
+): value is HistoryCoverage &
+  Record<string, unknown> & {
+    range: HistoryCoverage["range"] & Record<string, unknown>;
+  } {
   if (
     !object(value) ||
-    value.schema_version !== 1 ||
-    !object(value.scope) ||
-    !["decision", "event"].includes(String(value.scope.kind)) ||
     !object(value.range) ||
     !object(value.retention) ||
     !object(value.delivery) ||
-    !object(value.breakdowns) ||
-    !Array.isArray(value.buckets) ||
-    value.buckets.length > 400 ||
     !time(value.as_of) ||
     value.visibility !== "asynchronous"
   )
     return false;
-  const { range, retention, delivery, scope } = value;
+  const { range, retention, delivery } = value;
   if (
     !time(range.from) ||
     !time(range.to) ||
     range.from > range.to ||
     !nullableTime(range.effective_from) ||
     !nullableTime(range.effective_to) ||
-    ![300_000, 3_600_000, 86_400_000].includes(Number(range.bucket_ms)) ||
-    typeof range.bucket_ms !== "number" ||
     range.time_basis !== "accepted_at" ||
     !integer(retention.days) ||
     !integer(retention.requested_days) ||
@@ -265,7 +270,33 @@ export function validAnalytics(value: unknown): value is ActivityAnalytics {
     delivery.scope !== "installation" ||
     !time(delivery.observed_at) ||
     !integer(delivery.pending_records) ||
-    !nullableTime(delivery.oldest_record_accepted_at) ||
+    !nullableTime(delivery.oldest_record_accepted_at)
+  )
+    return false;
+  const from = Math.max(range.from, retention.available_since);
+  const to = Math.min(range.to, value.as_of);
+  return from > to
+    ? range.effective_from === null && range.effective_to === null
+    : range.effective_from === from && range.effective_to === to;
+}
+
+export function validAnalytics(value: unknown): value is ActivityAnalytics {
+  if (
+    !object(value) ||
+    !validHistoryCoverage(value) ||
+    value.schema_version !== 1 ||
+    !object(value.scope) ||
+    (value.scope.kind !== "decision" && value.scope.kind !== "event") ||
+    !object(value.breakdowns) ||
+    !Array.isArray(value.buckets) ||
+    value.buckets.length > 400 ||
+    ![300_000, 3_600_000, 86_400_000].includes(Number(value.range.bucket_ms)) ||
+    typeof value.range.bucket_ms !== "number"
+  )
+    return false;
+  const { range, retention, scope } = value;
+  const bucketMs = value.range.bucket_ms;
+  if (
     !dimensions.every(
       (key) => scope[key] === null || typeof scope[key] === "string",
     )
@@ -313,9 +344,7 @@ export function validAnalytics(value: unknown): value is ActivityAnalytics {
       bucket.to > range.effective_to ||
       bucket.to !==
         Math.min(
-          Math.floor(bucket.from / range.bucket_ms) * range.bucket_ms +
-            range.bucket_ms -
-            1,
+          Math.floor(bucket.from / bucketMs) * bucketMs + bucketMs - 1,
           range.effective_to,
         ) ||
       !counts(bucket.counts)
@@ -370,7 +399,7 @@ export const reasonName = (reason: string) =>
     verification_failed: "Verification failed",
     verification_expired: "Verification expired",
     verification_unavailable: "Verification unavailable",
-  }[reason] ?? reason.replaceAll("_", " "));
+  })[reason] ?? reason.replaceAll("_", " ");
 
 export const series = (kind: ActivityKind) =>
   kind === "decision"

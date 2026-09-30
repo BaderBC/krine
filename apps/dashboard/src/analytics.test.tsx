@@ -9,7 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { Activity } from "./Activity";
-import { ActivityChart, AnalyticsSummary } from "./Analytics";
+import { ActivityChart, AnalyticsSummary, useAnalytics } from "./Analytics";
 import { Overview, InstallationContext, EntityLookup } from "./Overview";
 import { api, ApiError } from "./api";
 import { validAnalytics, type ActivityAnalytics } from "./activity-analytics";
@@ -112,6 +112,40 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+it.each(["event", "decision"])(
+  "rejects an array %s analytics kind at both the wire boundary and hook",
+  async (kind) => {
+    const eventCounts = { total: 2, backend: 1, browser: 1, unknown: 0 };
+    const value = {
+      ...structuredClone(fixture),
+      scope: { ...fixture.scope, kind: "event" },
+      totals: eventCounts,
+      buckets: [{ from, to, counts: eventCounts }],
+      range: { ...fixture.range, bucket_ms: 3_600_000 },
+      breakdowns: {
+        checks: { items: [], other_count: 2 },
+        reasons: { items: [], other_count: 2 },
+      },
+    };
+    expect(validAnalytics(value)).toBe(true);
+    const malformed = { ...value, scope: { ...value.scope, kind: [kind] } };
+    expect(validAnalytics(malformed)).toBe(false);
+    vi.mocked(api.get).mockResolvedValue(malformed);
+    const params = new URLSearchParams({ from: String(from), to: String(to) });
+    function Probe() {
+      const result = useAnalytics(params, "event");
+      return (
+        <p>
+          {result.error ? "rejected" : result.data ? "rendered" : "loading"}
+        </p>
+      );
+    }
+    render(<Probe />);
+    await screen.findByText("rejected");
+    expect(screen.queryByText("rendered")).toBeNull();
+  },
+);
 
 it("renders aggregate totals independently of the paginated list and drills into clipped inclusive intervals", async () => {
   mount(<Overview />, `/?from=${from}&to=${to}`);

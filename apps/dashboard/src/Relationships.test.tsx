@@ -10,12 +10,9 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { api, ApiError } from "./api";
 import { Activity, DecisionPage, EntityPage } from "./Activity";
-import type {
-  DecisionDetail,
-  Entity,
-  Relationship,
-  RelationshipDetail,
-} from "./types";
+import { analytics, timeline } from "./subject-profile.test-fixtures";
+import type { SubjectContext } from "./subject-profile";
+import type { DecisionDetail, Relationship, RelationshipDetail } from "./types";
 
 const original: Relationship = {
   id: "association_one",
@@ -61,7 +58,7 @@ const ipSegment: Relationship = {
 };
 let rows: Relationship[];
 let detail: RelationshipDetail;
-let entity: Entity;
+let entity: SubjectContext;
 let entityFailure: unknown;
 let sourceFailure: unknown;
 const scope =
@@ -103,8 +100,7 @@ beforeEach(() => {
     },
     associations: [],
     associations_next_cursor: null,
-    recent_decisions: [],
-    recent_events: [],
+    observed_at: 100,
   };
   entityFailure = undefined;
   sourceFailure = undefined;
@@ -135,12 +131,32 @@ beforeEach(() => {
         }
         return structuredClone(detail) as T;
       }
-      if (path.startsWith("/lookup/entities?")) {
+      if (path.startsWith("/lookup/entities/context?")) {
         if (entityFailure !== undefined) {
           if (entityFailure instanceof Error) throw entityFailure;
           return entityFailure as T;
         }
         return structuredClone(entity) as T;
+      }
+      if (path.startsWith("/analytics/activity?"))
+        return analytics(new URLSearchParams(path.split("?")[1])) as T;
+      if (path.startsWith("/lookup/entities/timeline?")) {
+        const q = new URLSearchParams(path.split("?")[1]);
+        const from = Number(q.get("from")),
+          to = Number(q.get("to"));
+        return timeline({
+          scope: { kind: entity.kind as "client", id: entity.id },
+          range: {
+            from,
+            to,
+            effective_from: from,
+            effective_to: to,
+            time_basis: "accepted_at",
+          },
+          as_of: Math.max(Date.now(), to),
+          items: [],
+          next_cursor: null,
+        }) as T;
       }
       if (path.startsWith("/activity/"))
         return { items: [], next_cursor: null } as T;
@@ -184,7 +200,7 @@ it("loads an off-page source directly, displays exact provenance and keeps Activ
     screen.getByRole("link", { name: "Back to Activity" }).getAttribute("href"),
   ).toBe(scope);
   expect(
-    screen.getByRole("link", { name: "View activity" }).getAttribute("href"),
+    screen.getByRole("link", { name: "View records →" }).getAttribute("href"),
   ).toContain("entity_kind=client");
   const source = document.querySelector(".relationship-detail")!;
   for (const text of [
@@ -641,29 +657,6 @@ it("a mismatched detail response cannot authorize a change to another relationsh
   expect(api.run).not.toHaveBeenCalled();
 });
 
-const recentDecision = {
-  decision_id: "decision_one",
-  operation_id: "operation_one",
-  check: "can_claim_trial",
-  policy_version: 1,
-  outcome: "DENY",
-  reason: "rule_denied",
-  accepted_at: 100,
-  completed_at: 101,
-  client_id: "cli_one",
-  session_id: "ses_one",
-  user_id: null,
-  ip: "127.0.0.1",
-  source: "evaluation" as const,
-};
-const recentEvent = {
-  event_id: "event_one",
-  name: "trial_requested",
-  accepted_at: 100,
-  provenance: "backend" as const,
-  client_id: "cli_one",
-  user_id: null,
-};
 it.each([
   ["wrong entity ID", { id: "cli_other" }],
   ["wrong entity kind", { kind: "user" }],
@@ -727,48 +720,6 @@ it.each([
       },
     },
   ],
-  ["null event row", { recent_events: [null] }],
-  [
-    "event with a nonstring provenance",
-    { recent_events: [{ ...recentEvent, provenance: ["backend"] }] },
-  ],
-  [
-    "event with an object name",
-    { recent_events: [{ ...recentEvent, name: {} }] },
-  ],
-  [
-    "event with an object subject",
-    { recent_events: [{ ...recentEvent, user_id: {} }] },
-  ],
-  [
-    "event with a missing timestamp",
-    { recent_events: [{ ...recentEvent, accepted_at: undefined }] },
-  ],
-  ["null decision row", { recent_decisions: [null] }],
-  [
-    "decision with a nonstring source",
-    { recent_decisions: [{ ...recentDecision, source: ["evaluation"] }] },
-  ],
-  [
-    "decision with an object reason",
-    { recent_decisions: [{ ...recentDecision, reason: {} }] },
-  ],
-  [
-    "decision with an object check",
-    { recent_decisions: [{ ...recentDecision, check: {} }] },
-  ],
-  [
-    "decision with an object outcome",
-    { recent_decisions: [{ ...recentDecision, outcome: {} }] },
-  ],
-  [
-    "decision with an object subject",
-    { recent_decisions: [{ ...recentDecision, user_id: {} }] },
-  ],
-  [
-    "decision with a malformed timestamp",
-    { recent_decisions: [{ ...recentDecision, accepted_at: "yesterday" }] },
-  ],
 ])(
   "rejects %s on entity refresh without replacing evidence or losing a confirmed change",
   async (_name, invalid) => {
@@ -797,7 +748,7 @@ it("keeps a pending reviewed restoration when another malformed entity retry fai
   const user = userEvent.setup();
   mount();
   await startReview(user);
-  entityFailure = { ...structuredClone(entity), recent_events: [null] };
+  entityFailure = { ...structuredClone(entity), observed_at: null };
   await user.click(screen.getByRole("button", { name: "Confirm correction" }));
   await screen.findByText(/Showing stale data/);
   await user.click(
@@ -856,14 +807,11 @@ it("shows an initial identity read failure and accepts a later valid additive re
         provenance: { source: "provider", observed_at: 100 },
       },
     },
-    recent_decisions: [{ ...recentDecision, future_field: true }],
-    recent_events: [{ ...recentEvent, future_field: true }],
   };
   await user.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("heading", { name: "cli_one" });
   expect(screen.getByText("Unknown · provider unavailable")).toBeTruthy();
-  expect(screen.getByRole("link", { name: "trial_requested" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Deny" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Current metrics" })).toBeTruthy();
   expect(screen.queryByText(/Could not load this information/)).toBeNull();
 });
 
@@ -879,7 +827,7 @@ it.each([".", "..", "%2e", "a/b?c#d&x=1+ 雪"])(
     await screen.findByRole("heading", { name: id, level: 1 });
     await screen.findByRole("button", { name: "Correct relationship" });
     expect(api.get).toHaveBeenCalledWith(
-      `/lookup/entities?${new URLSearchParams({ kind: "user", id })}`,
+      `/lookup/entities/context?${new URLSearchParams({ kind: "user", id })}`,
     );
     expect(api.get).toHaveBeenCalledWith(
       `/lookup/entities/relationships?${new URLSearchParams({ kind: "user", id })}&limit=20`,
@@ -895,7 +843,7 @@ it.each(["kind=user&id=.&id=..", "kind=user&kind=client&id=."])(
   "rejects ambiguous entity selectors: %s",
   async (query) => {
     mount(`/inspect/entity?${query}`);
-    await screen.findByText("Provide one entity kind and ID in the address.");
+    await screen.findByText(/The address repeats/);
     expect(api.get).not.toHaveBeenCalled();
   },
 );
@@ -903,9 +851,7 @@ it("rejects duplicate relationship source selectors without reading either sourc
   mount(
     "/inspect/entity?kind=client&id=cli_one&relationship_kind=backend&relationship_id=.&relationship_id=..",
   );
-  await screen.findByText(
-    "Provide one relationship kind and ID in the address.",
-  );
+  await screen.findByText(/The address repeats/);
   expect(
     vi
       .mocked(api.get)

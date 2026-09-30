@@ -4,6 +4,8 @@ import {
   RelationshipForm,
   validReason,
   validRelationshipDetail,
+  validRelationshipSummary,
+  validRelationships,
 } from "./relationship-form";
 import type { Relationship } from "./types";
 
@@ -35,6 +37,16 @@ const corrected: Relationship = {
   revoked_at: 200,
   revocation_reason: "Wrong account",
   revoked_by: "administrator",
+};
+const observed: Relationship = {
+  ...original,
+  id: "ip_observation",
+  kind: "observed_ip",
+  user_id: null,
+  ip: "192.0.2.2",
+  source: "browser_observation",
+  first_source: "browser.context",
+  last_source: "browser.context",
 };
 const receipt = {
   relationship: corrected,
@@ -90,6 +102,8 @@ describe("reviewed relationship request recovery", () => {
     { ...receipt, relationship: { ...corrected, revision: 7 } },
     { ...receipt, relationship: { ...corrected, user_id: "other" } },
     { ...receipt, relationship: { ...corrected, revoked_at: null } },
+    { ...receipt, relationship: { ...corrected, first_source: ["backend"] } },
+    { ...receipt, relationship: { ...corrected, last_source: ["backend"] } },
   ])(
     "keeps ambiguous malformed acknowledgement %# retryable",
     async (response) => {
@@ -204,7 +218,59 @@ describe("reviewed relationship request recovery", () => {
     expect(client.run).toHaveBeenCalledTimes(1);
     expect(model.getSnapshot().storageUnavailable).toBe(true);
   });
+  it.each(["kind", "first_source", "last_source"] as const)(
+    "refuses to replay persisted recovery with an array %s",
+    async (field) => {
+      const client = {
+        run: vi.fn().mockRejectedValue(new ApiError(0, "lost", "lost")),
+      };
+      const model = new RelationshipForm(client);
+      await model.submit(observed, "correct", "Wrong observation");
+      const key = "krine:relationship-mutation:v1";
+      const saved = JSON.parse(sessionStorage.getItem(key)!);
+      saved.relationship[field] = [saved.relationship[field]];
+      sessionStorage.setItem(key, JSON.stringify(saved));
+      model.dispose();
+      const recovered = new RelationshipForm(client);
+      await recovered.retry();
+      expect(recovered.getSnapshot().pending).toBeNull();
+      expect(recovered.getSnapshot().storageUnavailable).toBe(true);
+      expect(recovered.getSnapshot().error).toContain(
+        "Request recovery could not be read",
+      );
+      expect(client.run).toHaveBeenCalledTimes(1);
+    },
+  );
 });
+
+it.each(["kind", "first_source", "last_source"] as const)(
+  "rejects an array %s before displaying or submitting a relationship",
+  async (field) => {
+    // An IP observation must not become a backend-assertion destination through coercion.
+    const malformed = { ...observed, [field]: ["backend"] };
+    expect(validRelationshipSummary(malformed)).toBe(false);
+    expect(validRelationships({ items: [malformed], next_cursor: null })).toBe(
+      false,
+    );
+    expect(
+      validRelationshipDetail({
+        relationship: malformed,
+        recalculation: "complete",
+        audit: { items: [], next_cursor: null },
+      }),
+    ).toBe(false);
+    const client = { run: vi.fn() };
+    const model = new RelationshipForm(client);
+    await model.submit(
+      malformed as unknown as Relationship,
+      "correct",
+      "Wrong observation",
+    );
+    expect(client.run).not.toHaveBeenCalled();
+    expect(model.getSnapshot().pending).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+  },
+);
 
 it("validates the backend byte and control-character reason contract", () => {
   expect(validReason("é".repeat(256))).toBe(true);

@@ -1355,3 +1355,129 @@ body:has(.activity-page) .installation-context { padding-top: 4px; padding-botto
 .active-scope-filters li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .active-scope-filters code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .active-scope-filters button { padding: 2px 5px; min-height: 24px; font-size: 11px; flex-shrink: 0; }
+
+/* Direct subject history shares the operator canvas, with current context nearby. */
+.investigation-return { display: inline-flex; flex-wrap: wrap; gap: 8px 20px; }
+.profile-return { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-bottom: 6px; font-size: 12px; }
+.profile-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.profile-heading > div { min-width: 0; }
+.profile-heading h1 { font-size: 29px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.profile-kind { font-size: 12px; color: #636d5c; margin-bottom: 5px; }
+.profile-heading button { flex-shrink: 0; font-size: 12px; }
+.profile-range { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid #d5d9cf; }
+.profile-range > label { min-width: 185px; }
+.profile-range label, .profile-range select, .profile-range button { font-size: 12px; }
+.profile-range .custom-range { order: 4; width: 100%; }
+.profile-range .subtle-link { padding: 9px 0; }
+.profile-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 310px); gap: 36px; }
+.profile-history, .profile-context { min-width: 0; }
+.profile-context { border-left: 1px solid #dfe2d8; padding-left: 26px; margin-top: 18px; }
+.profile-context .section-heading { flex-wrap: wrap; gap: 4px 12px; }
+.profile-context h2, .profile-context h3 { font-size: 14px; }
+.profile-context .help { font-size: 12px; }
+.profile-context button { font-size: 11px; min-height: 28px; padding: 4px 7px; }
+.profile-context .metric-values { margin: 10px 0; }
+.profile-context .metric-values > div { display: block; margin: 0; padding: 8px 0; }
+.profile-context .metric-values dd { margin: 3px 0 0; }
+.profile-context .metric-values dt { font-size: 12px; }
+.profile-context .metric-values .help { margin: 4px 0 0; font-size: 11px; }
+.profile-facts { margin: 14px 0; font-size: 12px; }
+.profile-facts > div { padding: 6px 0; }
+.profile-facts dt { color: #646d5e; font-size: 11px; }
+.profile-facts dd { margin: 1px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.profile-context .relationship-heading { gap: 8px; }
+.profile-context .relationship-list { list-style: none; padding: 0; margin: 12px 0; }
+.profile-context .relationship-list > li { padding: 12px 0; border-bottom: 1px solid #e0e3d9; }
+.profile-context .relationship-row { gap: 5px; font-size: 12px; }
+.profile-context .relationship-row > div { flex-basis: 100%; }
+.profile-context .relationship-row .help { font-size: 11px; }
+.profile-context .relationship-row .timestamp { font-size: inherit; }
+.profile-context .relationship-detail .facts { display: block; }
+.profile-context .relationship-detail .facts > div { margin-bottom: 12px; }
+.profile-context .relationship-detail .facts dd { margin-left: 0; }
+.profile-context .relationship-detail .review { padding: 14px; }
+.profile-context .pagination { flex-wrap: wrap; }
+.profile-context #relationships { margin-top: 26px; }
+.profile-context .notice { font-size: 12px; flex-wrap: wrap; }
+.profile-context pre { max-width: 100%; }
+.profile-trend { margin: 8px 0; }
+.profile-trend-switch { display: flex; gap: 20px; font-size: 12px; border-bottom: 1px solid #e0e3d9; margin-bottom: 6px; }
+.profile-trend-switch a { text-decoration: none; padding: 0 0 5px; color: #666f5f; }
+.profile-trend-switch a[aria-current] { border-bottom: 2px solid #315b45; color: #253d2c; font-weight: 600; }
+.profile-trend .compact-chart { margin-top: 8px; }
+.profile-trend .timeline-chart { min-height: 90px; }
+.profile-trend .compact-coverage { margin: 5px 0 0; }
+.profile-trend .chart-controls { gap: 3px 12px; }
+.profile-trend .chart-legend { font-size: 11px; gap: 8px 16px; }
+.profile-history .section-heading h2 { font-size: 16px; }
+.timeline-day { font-size: 13px; margin: 24px 0 6px; padding-bottom: 6px; border-bottom: 1px solid #d5d9cf; }
+.timeline-group:first-child .timeline-day { margin-top: 0; }
+.timeline-session { display: flex; flex-wrap: wrap; gap: 5px 20px; color: #606a58; font-size: 11px; margin: 8px 0 4px; overflow-wrap: anywhere; }
+.timeline-session > span { min-width: 0; }
+.subject-records { list-style: none; margin: 0; padding: 0; }
+.subject-record { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 15px; padding: 10px 0; border-bottom: 1px solid #e6e8e0; content-visibility: auto; contain-intrinsic-size: auto 78px; }
+.record-time { font-size: 11px; font-variant-numeric: tabular-nums; color: #65705d; padding-top: 2px; text-decoration: none; }
+.record-time:hover { text-decoration: underline; }
+.record-content { min-width: 0; }
+.record-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.record-heading > a { text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
+.record-heading > a:hover { text-decoration: underline; }
+.record-kind, .record-outcome { font-size: 11px; flex-shrink: 0; }
+.record-kind { color: #626c5c; }
+.record-outcome { color: #3d624b; font-weight: 600; }
+.outcome-deny { color: #9e3e33; }
+.outcome-challenge_required { color: #82611b; }
+.outcome-unknown { color: #626471; }
+.record-content .captured-reason { font-size: 12px; margin: 3px 0; }
+.record-content .captured-value, .record-content .receipt-basis { font-size: 11px; }
+.record-content .compact-reason .captured-value { display: inline; }
+.record-content .compact-reason .captured-value::before { content: ' · '; }
+.record-context { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: #626c5c; margin-top: 3px; }
+.record-context > span { min-width: 0; overflow-wrap: anywhere; }
+.record-context .timestamp { font-size: inherit; }
+.sample-label { color: #716745; }
+.timeline-coverage { font-size: 12px; }
+.timeline-coverage summary { font-size: 12px; font-weight: 400; }
+.profile-history .pagination { justify-content: space-between; font-size: 12px; }
+.profile-history .pagination:empty { display: none; }
+.profile-history .pagination .button { font-size: 12px; }
+@media (max-width: 1000px) {
+  .profile-layout { grid-template-columns: minmax(0, 1fr) 265px; gap: 24px; }
+  .profile-context { padding-left: 20px; }
+}
+@media (max-width: 760px) {
+  .profile-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .profile-context { border-left: 0; border-top: 1px solid #d5d9cf; padding: 24px 0 0; }
+  .profile-context .relationship-row > div { flex: 1 1 230px; }
+  .profile-heading { align-items: start; }
+  .profile-heading h1 { font-size: 25px; }
+  .profile-heading button { max-width: 98px; }
+  .profile-range .subtle-link { padding: 4px 0; }
+  .profile-history .section-heading { flex-wrap: wrap; gap: 4px 15px; }
+  .profile-trend .timeline-chart { min-height: 100px; }
+  .subject-record { grid-template-columns: 59px minmax(0, 1fr); gap: 10px; }
+  .record-time { font-size: 10px; }
+}
+.mobile-context-link { display: none; }
+#profile-current-context { scroll-margin-top: 20px; }
+@media (max-width: 760px) {
+  .mobile-context-link { display: block; }
+}
+body:has(.subject-page) main { padding-top: 22px; }
+.profile-toolbar { display: flex; justify-content: space-between; gap: 12px 20px; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #d5d9cf; }
+.profile-toolbar .profile-heading { display: contents; }
+.profile-toolbar .profile-heading > div { flex: 1; min-width: 150px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
+.profile-toolbar .profile-kind { margin: 0; }
+.profile-toolbar .profile-heading > button { order: 3; margin-bottom: 2px; }
+.profile-toolbar .profile-range { border: 0; padding: 0; justify-content: flex-end; max-width: 60%; align-items: center; gap: 8px 12px; }
+.profile-toolbar .profile-range > label { min-width: 160px; display: flex; align-items: center; gap: 8px; }
+.profile-toolbar .profile-range > label select { margin: 0; width: 160px; }
+.profile-toolbar .profile-range .subtle-link { padding: 0; }
+.profile-toolbar .custom-range summary { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .profile-toolbar { flex-wrap: wrap; gap: 16px; }
+  .profile-toolbar .profile-heading > button { order: 0; }
+  .profile-toolbar .profile-heading > div { display: block; }
+  .profile-toolbar .profile-range { width: 100%; max-width: none; justify-content: flex-start; }
+  .profile-toolbar .profile-range .subtle-link { text-align: left; flex-basis: auto; }
+}

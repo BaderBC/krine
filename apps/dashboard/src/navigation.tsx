@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import type { LinkProps } from "react-router-dom";
+import { profileScopeError } from "./subject-profile";
 
 function activityUrl(value: string | null): string | null {
   if (!value) return null;
@@ -46,18 +47,95 @@ export function rememberActivityPosition(origin: string | null) {
   }
 }
 
-/** Ordinary links carry a bounded, same-origin investigation context across detail pages. */
+function profileUrl(value: string | null): string | null {
+  if (!value || value.length > 16384) return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    if (
+      url.origin !== window.location.origin ||
+      url.pathname !== "/inspect/entity" ||
+      url.hash
+    )
+      return null;
+    const params = url.searchParams;
+    if (
+      profileScopeError(
+        params,
+        params.get("kind") ?? "",
+        params.get("id") ?? "",
+      ) ||
+      !params.has("from") ||
+      !params.has("to")
+    )
+      return null;
+    if (params.has("return_to") && !activityUrl(params.get("return_to")))
+      return null;
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+export function useProfileOrigin() {
+  const location = useLocation();
+  const route = useParams();
+  const params = new URLSearchParams(location.search);
+  if (location.pathname === "/inspect/entity")
+    return profileUrl(`${location.pathname}${location.search}`);
+  if (location.pathname.startsWith("/entities/") && route.kind && route.id) {
+    params.set("kind", route.kind);
+    params.set("id", route.id);
+    return profileUrl(`/inspect/entity?${params}`);
+  }
+  return params.getAll("subject_return").length === 1
+    ? profileUrl(params.get("subject_return"))
+    : null;
+}
+
+export function investigationInterval(url: string | null) {
+  if (!url) return null;
+  const params = new URL(url, window.location.origin).searchParams;
+  const from = params.get("from"),
+    to = params.get("to");
+  if (
+    params.getAll("from").length !== 1 ||
+    params.getAll("to").length !== 1 ||
+    !/^\d+$/.test(from ?? "") ||
+    !/^\d+$/.test(to ?? "") ||
+    !Number.isSafeInteger(Number(from)) ||
+    !Number.isSafeInteger(Number(to)) ||
+    Number(to) > 8.64e15 ||
+    Number(from) > Number(to)
+  )
+    return null;
+  return { from: from!, to: to! };
+}
+
+/** Carry an exact interval and bounded return destinations through an investigation. */
 export function InvestigationLink({ to, onClick, ...props }: LinkProps) {
   const location = useLocation();
   const origin = useActivityOrigin();
+  const profile = useProfileOrigin();
   let target = to;
-  if (origin && typeof to === "string") {
+  if (typeof to === "string") {
     const url = new URL(
       to,
       `${window.location.origin}${location.pathname}${location.search}`,
     );
     if (url.origin === window.location.origin && url.pathname !== "/activity") {
-      url.searchParams.set("return_to", origin);
+      if (origin) url.searchParams.set("return_to", origin);
+      if (url.pathname === "/inspect/entity") {
+        const interval =
+          investigationInterval(profile) ?? investigationInterval(origin);
+        if (
+          interval &&
+          !url.searchParams.has("from") &&
+          !url.searchParams.has("to")
+        ) {
+          url.searchParams.set("from", interval.from);
+          url.searchParams.set("to", interval.to);
+        }
+      } else if (profile) url.searchParams.set("subject_return", profile);
       target = `${url.pathname}${url.search}${url.hash}`;
     }
   }
@@ -74,10 +152,19 @@ export function InvestigationLink({ to, onClick, ...props }: LinkProps) {
 }
 export function ActivityReturn({ events = false }: { events?: boolean }) {
   const origin = useActivityOrigin();
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const profile =
+    params.getAll("subject_return").length === 1
+      ? profileUrl(params.get("subject_return"))
+      : null;
   return (
-    <Link to={origin ?? (events ? "/activity?view=events" : "/activity")}>
-      Back to Activity{events ? " · Events" : ""}
-    </Link>
+    <span className="investigation-return">
+      {profile && <Link to={profile}>Back to subject</Link>}
+      <Link to={origin ?? (events ? "/activity?view=events" : "/activity")}>
+        Back to Activity{events ? " · Events" : ""}
+      </Link>
+    </span>
   );
 }
 export function useActivityScroll(ready: boolean) {
