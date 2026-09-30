@@ -1,5 +1,6 @@
 mod addressing;
 mod admin;
+mod analytics;
 mod auth;
 mod browser;
 mod checks;
@@ -41,6 +42,7 @@ pub struct App {
     pub db: PgPool,
     pub redis: ConnectionManager,
     pub http: reqwest::Client,
+    analytics_queries: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     provider_test: ProviderTest,
 }
@@ -107,6 +109,7 @@ impl App {
             db,
             redis,
             http,
+            analytics_queries: Arc::new(tokio::sync::Semaphore::new(2)),
             #[cfg(test)]
             provider_test: ProviderTest::default(),
         })
@@ -181,6 +184,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/admin/activity/events/{id}", get(history::event))
         .route("/v1/admin/activity/decisions", get(history::decisions))
         .route("/v1/admin/activity/decisions/{id}", get(history::decision))
+        .route("/v1/admin/analytics/activity", get(analytics::activity))
         .fallback(|| async { ApiError::absent() })
         .layer(middleware::from_fn_with_state(app.clone(), auth::boundary))
         .with_state(app)

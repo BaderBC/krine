@@ -117,9 +117,10 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 | `GET /providers` | `{ items: ProviderSummary[] }` |
 | `PUT /providers/{capability}` | `{ revision, provider, enabled, config, test_token?, acknowledge_dependents?: boolean, reviewed_dependents_token?: string }` → `ProviderSummary`; enabled candidate requires a matching fresh `ready` or `configuration_checked` test token; replacement/disconnection requires explicit dependent-check acknowledgement |
 | `POST /providers/{capability}/tests` | `{ revision, provider, enabled, config }` → `{ status: "ready"|"configuration_checked"|"unavailable"|"invalid", checked_at, message, test_token: string|null, dependent_checks: string[], dependent_versions: { check, version }[], dependents_token: string }`; tests candidate without saving it; server binds token to exact candidate digest, current revision and ten-minute expiry |
-| `GET /activity/decisions` | Filters `check`, `operation_id` (exact), `outcome`, `entity`, `entity_kind`, `from`, `to`; items `DecisionSummary` |
+| `GET /activity/decisions` | Filters `check`, `operation_id` (exact), `outcome`, `reason` (exact), `entity`, `entity_kind`, `from`, `to`; items `DecisionSummary` |
 | `GET /activity/decisions/{id}` | `DecisionDetail` |
-| `GET /activity/events` | Filters `name`, `entity`, `entity_kind`, `from`, `to`; items accepted event envelope + `accepted_at`, `provenance: "backend"|"browser"` |
+| `GET /analytics/activity` | Bounded, exact latest-record counts, time series and decision breakdowns; see [Activity analytics](#activity-analytics). |
+| `GET /activity/events` | Filters `name`, `provenance` (`backend` or `browser`), `entity`, `entity_kind`, `from`, `to`; items accepted event envelope + `accepted_at`, `provenance: "backend"|"browser"` |
 | `GET /activity/events/{id}` | Accepted event envelope + `accepted_at`, `provenance`, linked entity identifiers and available metric effects |
 | `GET /entities/{kind}/{id}` | `{ kind, id, first_seen, metadata, metrics: Snapshot.metrics, associations: Association[], recent_decisions: DecisionSummary[], recent_events: Event[] }`; kinds client/session/user/ip; recent lists capped at 20; associations capped at 100 with `associations_next_cursor`, accepted as `associations_cursor` on this endpoint |
 | Relationship inspection and correction | See [relationship routes](#relationship-provenance-and-correction) below; revisions, reason and mutation identity are required for changes. |
@@ -132,7 +133,7 @@ Lists return `{ items: T[], next_cursor: string|null }`; `limit` defaults 50, ma
 
 `ProviderSummary` is `{ capability, provider, enabled, revision, config, has_secret, status, message, checked_at, dependent_checks: string[], dependent_versions: { check: string, version: number }[], dependents_token: string }`; capabilities are `ip_intelligence` and `verification`. `config` contains public configuration only; secret writes use explicit `secret` within write config, omission retains the previous secret and `null` clears it. `status` is `unconfigured`, `disabled`, `ready` or `configuration_checked`; it describes the saved configuration test, not a live availability guarantee. Turnstile format checking returns `configuration_checked` with a message that live site-key/secret pairing is untested; real application verification remains strict. Proxycheck tests perform a one-second lookup of `1.1.1.1`: complete evidence reports `ready`; warnings or incomplete evidence with at least one usable normalized field report `configuration_checked`, with missing/invalid fields still unknown and an explicit reminder that other IPs may differ. No usable evidence, malformed responses and credential rejection cannot activate a candidate. Old revisions needed by pending attempts are retained. Candidate tests never change active configuration, and failed tests cannot be saved as enabled. Write config for proxycheck is `{ secret?: string|null }`; its key is optional for the public service tier. Turnstile uses `{ site_key?: string, secret?: string|null }`, with a valid site key and nonempty secret required when enabled. Omitted public fields retain the existing value. Disabled candidates need no test token. Replacing or disconnecting an existing provider revision with published dependents requires `acknowledge_dependents: true` and `reviewed_dependents_token` matching the exact sorted dependent check/version set returned by GET or test. Read the immutable policies listed in `dependent_versions` for review. Acknowledged replacement/disconnection rejects missing or stale tokens with `409 dependent_checks_changed`, including republished, added or removed dependents; refresh and review before sending a new mutation key. Candidate activation tokens remain valid for their original ten minutes after a stale review. Publication locks the union of previous and next dependencies, so changes cannot race this check. No lock spans operator review. Initial providers: `proxycheck` for IP intelligence and `turnstile` for verification; their adapters normalize evidence. Policies never mention either name. `CredentialSummary` is `{ id, kind: "browser"|"server", label, source: "bootstrap"|"administrator", public_key: string|null, created_at, revoked_at: number|null, revoked_by: "administrator"|null }`. Labels contain 1–128 bytes without control characters or surrounding whitespace. All browser credentials use the deployment’s exact origin allowlist. Server values contain 256 random bits and are stored only as SHA-256 digests. Secret-once creation is an intentional exception to response replay; on a lost first response revoke the inaccessible credential and create a replacement. Browser creations use `secret_status: "not_applicable"`; their public value remains in metadata. Create replays return current revocation state. Authentication checks PostgreSQL on every request; after revocation commits later authentication fails, while an already-authenticated request may finish. Existing participation/proof tokens are not revoked by key rotation. Setup returns no key if none is active. See [ADR 0012](../decisions/0012-durable-application-credentials.md) for permanent bootstrap import and upgrade requirements.
 
-Activity scalar filters accept at most 256 bytes. `entity` search matches the exact identifier across client, session, user and IP fields. Optional `entity_kind` (`client`, `session`, `user`, `ip`) requires `entity` and restricts matching to that field. Links from a known entity must include its kind. Entity-detail recent history is likewise typed. Newly issued Activity cursors bind all filters, including entity kind; changing filters requires a fresh page. Legacy cursors remain accepted only for untyped requests. Both lists add `retention: { days, requested_days, applying, available_since }`, with the effective retention boundary in milliseconds; this does not promise uninterrupted historical coverage. Analytical visibility is asynchronous.
+Activity scalar filters accept at most 256 bytes. `entity` search matches the exact identifier across client, session, user and IP fields. Optional `entity_kind` (`client`, `session`, `user`, `ip`) requires `entity` and restricts matching to that field. Links from a known entity must include its kind. Entity-detail recent history is likewise typed. Newly issued Activity cursors bind all filters, including entity kind; changing filters requires a fresh page. Legacy cursors remain accepted only for untyped requests. The additive `reason` and `provenance` filters bind cursors as well; cursors issued without these filters remain compatible. Both lists add `retention: { days, requested_days, applying, available_since }`, with the effective retention boundary in milliseconds; this does not promise uninterrupted historical coverage. Analytical visibility is asynchronous.
 
 Setup adds `observations: { tracked_since, check: string|null, client_evidence: Receipt|null, backend_event: Receipt|null, check_attempt: Receipt|null }`. A `Receipt` is `{ received_at, basis: "tracked"|"retained_history", record: { kind: "event"|"decision", id, availability: "available"|"pending"|"not_retained"|"unavailable" } }`. Client evidence and backend events are installation-wide; the attempt belongs only to the requested check. Without `check`, the attempt is null. Unknown checks return 404. A receipt proves durable acceptance by Krine, never application-side enforcement. Invalid pre-admission requests do not create attempts.
 
@@ -140,7 +141,7 @@ Setup adds `observations: { tracked_since, check: string|null, client_evidence: 
 
 Decision lists select summary fields from analytical storage; policy definitions, metric snapshots and full evaluation traces are retrieved only for an individual decision.
 
-`DecisionSummary` is `{ decision_id, operation_id, check, policy_version, outcome, reason, accepted_at, completed_at: number|null, client_id, session_id, user_id: string|null, ip, source: "evaluation", reason_summary: ReasonSummary|null }`. This release records admitted evaluated attempts. Invalid requests remain HTTP errors, and local SDK fallback is not ingested into Activity. Neither is fabricated as an evaluated decision. `DecisionDetail` adds `{ policy, snapshot, evaluation, relationship_ids, relationship_context, provider_revisions, provider_observations?, verification_transitions, requests }`. `provider_revisions` maps used capabilities to `{ revision, enabled }`; `provider_observations` records the actual normalized lookup status, safe cause and observation time. `verification_transitions` is an immutable chronological sequence `{ sequence, at, challenge_id: string|null, state, detail }`; states include `pending`, `verifying`, `passed`, `failed`, `expired` and `unavailable`. The latest Activity row represents one logical attempt throughout all steps; earlier analytical deliveries cannot overwrite newer state. `evaluation` is the core trace including every evaluated condition, explicit unknown cause and verification result. `requests` is bounded attempt metadata `{ at, kind: "initial"|"retry"|"verification", result }`, never proof/challenge bearer tokens. Browser credentials, proof tokens, provider secrets and verification tokens never appear in dashboard history.
+`DecisionSummary` is `{ decision_id, operation_id, check, policy_version, outcome, reason, accepted_at, completed_at: number|null, client_id, session_id, user_id: string|null, ip, source: "evaluation", reason_summary: ReasonSummary|null }`. This release records admitted evaluated attempts. Invalid requests remain HTTP errors, and local SDK fallback is not ingested into Activity. Neither is fabricated as an evaluated decision. Synthetic demo records may additionally carry `sample_data: { dataset_id: string, generator_version: string }`, preserved in summaries and detail; live and legacy records omit it. `DecisionDetail` adds `{ policy, snapshot, evaluation, relationship_ids, relationship_context, provider_revisions, provider_observations?, verification_transitions, requests }`. `provider_revisions` maps used capabilities to `{ revision, enabled }`; `provider_observations` records the actual normalized lookup status, safe cause and observation time. `verification_transitions` is an immutable chronological sequence `{ sequence, at, challenge_id: string|null, state, detail }`; states include `pending`, `verifying`, `passed`, `failed`, `expired` and `unavailable`. The latest Activity row represents one logical attempt throughout all steps; earlier analytical deliveries cannot overwrite newer state. `evaluation` is the core trace including every evaluated condition, explicit unknown cause and verification result. `requests` is bounded attempt metadata `{ at, kind: "initial"|"retry"|"verification", result }`, never proof/challenge bearer tokens. Browser credentials, proof tokens, provider secrets and verification tokens never appear in dashboard history.
 
 `ReasonSummary` is captured with each immutable decision revision, never recomputed from current metrics, policy or providers:
 
@@ -178,6 +179,59 @@ type ReasonSummary = {
 ```
 
 The sample includes the decisive rule, or up to three evaluated continuation rules explaining Otherwise. It includes at most four leaves in total, with zero-based paths into the captured condition tree. `position` is one-based. A compound rule's result cannot be inferred from one sampled leaf; inspect detail for complete logic. Unknown carries its original cause and metric version. Strings preview at most 64 UTF-8 bytes; `in` tests preview at most three values. The serialized summary is at most 8 KiB, with explicit truncation flags for omitted evidence and shortened values. Legacy records without a summary return null; they are never reconstructed using current evidence.
+
+### Activity analytics
+
+`GET /v1/admin/analytics/activity` uses the existing admin session. It requires `kind: decision|event`, `from` and `to`: nonnegative, safe integer Unix milliseconds with inclusive bounds and at most 31 days of covered milliseconds. Optional `bucket: 5m|1h|1d` selects a UTC-aligned interval; omission chooses the smallest interval fitting at most 400 buckets. Invalid ranges, repeated/unknown parameters and an interval requiring more buckets return 422.
+
+Decision filters are `check`, `operation_id`, `outcome`, `reason`, `entity`, `entity_kind`. Event filters are `name`, `provenance`, `entity`, `entity_kind`. Scalar limits, exact byte-preserving identifiers and typed entity semantics match Activity lists. Filters belonging only to the other view are rejected. Reasons are captured result reasons, not a claim of fraud; `otherwise` can accompany Allow or Deny.
+
+```ts
+type DecisionCounts = {
+  total: number; allow: number; deny: number;
+  awaiting_verification: number; unknown: number;
+};
+type EventCounts = {
+  total: number; backend: number; browser: number; unknown: number;
+};
+type Breakdown = {
+  items: Array<{ value: string | null; count: number }>;
+  other_count: number;
+};
+type ActivityAnalytics<T extends DecisionCounts | EventCounts> = {
+  schema_version: 1;
+  scope: {
+    kind: "decision" | "event";
+    check: string | null; operation_id: string | null; outcome: string | null;
+    entity: string | null; entity_kind: "client" | "session" | "user" | "ip" | null;
+    name: string | null; reason: string | null; provenance: "backend" | "browser" | null;
+  };
+  range: {
+    from: number; to: number; time_basis: "accepted_at";
+    effective_from: number | null; effective_to: number | null; bucket_ms: number;
+  };
+  as_of: number;
+  retention: { days: number; requested_days: number; applying: boolean; available_since: number };
+  visibility: "asynchronous";
+  delivery: {
+    scope: "installation"; observed_at: number; pending_records: number;
+    oldest_record_accepted_at: number | null;
+  };
+  totals: T | null;
+  buckets: Array<{ from: number; to: number; counts: T }>;
+  breakdowns: { checks?: Breakdown; reasons?: Breakdown };
+};
+```
+
+The effective range intersects requested bounds with the committed retention floor and PostgreSQL's observed clock (`as_of`). With no intersection, both effective bounds and totals are null, buckets are empty and breakdowns are empty. This represents unavailable expired/future coverage, not zero traffic. A successfully queried observable interval has exact counts, including zero-filled buckets. First/last buckets return clipped inclusive bounds; drilldown uses those bounds directly. A relative refresh advances both requested bounds; an absolute investigation preserves them.
+
+Counts deduplicate deliveries and revisions by the existing logical record identity. Decisions are grouped by original acceptance time and their latest delivered outcome, so an older bucket can change after verification completes. They are not a historical snapshot of what was known at that earlier time. Total includes unknown/unreadable outcome or provenance; final denial proportions use only Allow plus Deny as denominator. No response infers rejected requests, SDK fallback, enforcement, fraud, human identity or evaluation latency. Unknown counts and null breakdown dimensions have no invented filter alias.
+
+Decision responses include top 10 check and captured-reason counts, ordered by count descending and then UTF-8 value ascending, null last on ties. `other_count` accounts for all remaining records; each breakdown reconciles to the filtered total. Event breakdowns are empty in this version. All sections come from one bounded analytical statement; no approximate or partial counts are returned.
+
+Delivery metadata is installation-wide even for a scoped chart. Its oldest timestamp is the original acceptance time of a record awaiting delivery, not the time its current revision was queued or a measured export delay. Zero pending rows does not establish complete history: an admitted evaluation may not yet have produced its first history revision. `as_of` is a server observation, not an export watermark. Retention is likewise a visibility boundary, not evidence of uninterrupted collection.
+
+Each process admits at most two concurrent analytics requests. Queries cap execution at 3 seconds, memory at 256 MiB, threads at 2, read rows at 20 million, read bytes at 2 GiB, aggregation/sort groups at 100,000 and output at 1 MiB/1,620 rows. These are safety limits, not throughput promises. Budget exhaustion, concurrency saturation or analytical failure returns 503 `unavailable`; the caller must retain scope and show an honest failure state instead of substituting zeros. See [ADR 0017](../decisions/0017-bounded-activity-analytics.md).
 
 ### Query-addressed identifiers
 
